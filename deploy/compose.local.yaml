@@ -1,0 +1,15 @@
+# Local stack check only (ENVIRONMENT.md): init copies the working tree instead of fetching from GitHub, so
+# uncommitted changes can be tested. Paths are relative to deploy/.
+services:
+  init:
+    volumes:
+      - ..:/src:ro
+    command:
+      - bash
+      - -c
+      - |
+        set -euo pipefail
+        rm -rf /chat-storage/app && mkdir -p /chat-storage/app
+        cp -r /src/functions /src/deploy /chat-storage/app/
+        echo "working-tree local $$(date -u +%FT%TZ)" > /chat-storage/app/DEPLOYED
+        exec bash /chat-storage/app/deploy/init.sh /chat-storage

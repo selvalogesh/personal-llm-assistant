@@ -1,21 +1,49 @@
 # The OMV Compose stack "Chat": paste this file into the stack's file and .env.example into its environment (setup
-# steps: deploy/README.md). CHAT comes from OMV's global.env. No defaults: every variable must be set. The image is
-# built and pushed to GHCR by .github/workflows/image.yml on every push to main.
+# steps: deploy/README.md). CHAT comes from OMV's global.env. No defaults: every variable must be set. Both Open
+# WebUI services run its official image, unmodified; our files come from the repo at CHAT_REF on every Up (CR-2).
+# Upgrading Open WebUI: change both tags together (a test checks they match), then Pull, Down, Up.
 
 services:
-  # Runs first on every Up: creates the CHAT folders and the secrets that are missing (placeholders, plus a random
-  # session key), and fixes modes (deploy/init.sh). Never overwrites. Root, because the folders are root's; no network.
+  # Runs first on every Up. Fetches functions/ and deploy/ from the repo at CHAT_REF into ${CHAT}/app (keeping the
+  # last copy if GitHub can't be reached), then runs deploy/init.sh from it: creates the CHAT folders and the
+  # missing secrets, and fixes modes. Never overwrites a secret. Root, because the folders are root's. The script
+  # is here because it can't come from the repo it fetches; "$$" is a literal "$" in compose.
   init:
-    image: ghcr.io/selvalogesh/personal-llm-assistant:latest
+    image: ghcr.io/open-webui/open-webui:v0.12.5
     user: "0:0"
-    network_mode: none
-    command: ["bash", "/app/chat-start/init.sh", "/chat-storage"]
+    environment:
+      CHAT_REF: ${CHAT_REF:?set CHAT_REF in the stack environment}
     volumes:
       - ${CHAT:?set CHAT in OMV's global.env}:/chat-storage
+    command:
+      - bash
+      - -c
+      - |
+        set -euo pipefail
+        repo=https://github.com/selvalogesh/personal-llm-assistant.git
+        mkdir -p /tmp/src && cd /tmp/src && git init -q
+        if git fetch -q --depth 1 "$$repo" "$$CHAT_REF"; then
+          rm -rf /chat-storage/app.next && mkdir -p /chat-storage/app.next
+          git archive FETCH_HEAD functions deploy | tar -x -C /chat-storage/app.next
+          echo "$$(git rev-parse FETCH_HEAD) $$CHAT_REF $$(date -u +%FT%TZ)" > /chat-storage/app.next/DEPLOYED
+          rm -rf /chat-storage/app && mv /chat-storage/app.next /chat-storage/app
+          echo "init: fetched $$(cat /chat-storage/app/DEPLOYED)"
+        elif git ls-remote "$$repo" HEAD > /dev/null 2>&1; then
+          echo "init: GitHub has no $$CHAT_REF: set CHAT_REF to stable, a tag or a full commit hash, then Up again" >&2
+          exit 1
+        elif [[ -f /chat-storage/app/deploy/init.sh ]]; then
+          echo "init: couldn't reach GitHub; keeping $$(cat /chat-storage/app/DEPLOYED)" >&2
+        else
+          echo "init: couldn't reach GitHub and there's no earlier copy; check the network, then Up again" >&2
+          exit 1
+        fi
+        exec bash /chat-storage/app/deploy/init.sh /chat-storage
 
-  # openai.selvalogesh.com → your proxy or tunnel → this port. Always on.
+  # openai.selvalogesh.com → your proxy or tunnel → this port. Always on. Starts from our entrypoint in the fetched
+  # copy, which loads deploy/settings.env, checks the Open WebUI version, then reads the secrets.
   webui:
-    image: ghcr.io/selvalogesh/personal-llm-assistant:latest
+    image: ghcr.io/open-webui/open-webui:v0.12.5
+    command: ["bash", "/app/chat/deploy/entrypoint.sh"]
     depends_on:
       init:
         condition: service_completed_successfully
@@ -26,6 +54,8 @@ services:
       WEBUI_ADMIN_EMAIL: ${CHAT_ADMIN_EMAIL:?set CHAT_ADMIN_EMAIL in the stack environment}
       WHISPER_MODEL: ${CHAT_WHISPER_MODEL:?set CHAT_WHISPER_MODEL in the stack environment}
     volumes:
+      # app/: our functions and startup scripts at the deployed commit; read-only
+      - ${CHAT}/app:/app/chat:ro
       # data/: users, chats, files, document vectors and the Whisper model cache
       - ${CHAT}/data:/app/backend/data
       # secrets/: read-only, so even the internet-facing app can't change the keys (deploy/README.md, step 3)
