@@ -1,10 +1,19 @@
 #!/usr/bin/env bash
-# Starts Open WebUI with the secrets from the read-only secrets folder, and loads our functions once it's up
-# (CR-1 §3.5). Secrets are exported to this process only: they never appear in the image, the stack environment
-# or `docker inspect`.
+# Starts the official Open WebUI image from our files in the fetched copy (CR-2 §3.3): loads our settings, checks
+# the Open WebUI version, reads the secrets from the read-only secrets folder, and loads our functions once it's
+# up. Secrets are exported to this process only: they never appear in the stack environment or `docker inspect`.
 set -euo pipefail
 
+APP="$(cd "$(dirname "$0")/.." && pwd)"
 SECRETS="${CHAT_SECRETS_DIR:-/run/chat-secrets}"
+
+# Our settings over the image's defaults; plain KEY=value lines (deploy/settings.env)
+set -a
+. "$APP/deploy/settings.env"
+set +a
+
+# Stops when the stack's Open WebUI isn't the version the repo pins, and logs the running commit
+CHECK_APP_DIR="$APP" python "$APP/deploy/check_version.py"
 
 # Prints the secret's value; stops the container with a clear message when the file is missing or a placeholder.
 read_secret() {
@@ -27,11 +36,11 @@ WEBUI_ADMIN_PASSWORD="$(read_secret webui-admin-password)"
 # The Router reads the key file itself on every request; document search needs it in Open WebUI's settings.
 RAG_OPENAI_API_KEY="$(read_secret openrouter-api-key)"
 export WEBUI_SECRET_KEY WEBUI_ADMIN_PASSWORD RAG_OPENAI_API_KEY
-# Kokoro needs no key, but Open WebUI's OpenAI-style speech client sends one (set here, not in the Dockerfile,
-# where the name trips the secrets linter).
+# Kokoro needs no key, but Open WebUI's OpenAI-style speech client sends one (set here, not in settings.env, where
+# the name trips the secrets linter).
 export AUDIO_TTS_OPENAI_API_KEY="${AUDIO_TTS_OPENAI_API_KEY:-not-needed}"
 
-python /app/chat-start/load_functions.py &
+LOADER_FUNCTIONS_DIR="$APP/functions" python "$APP/deploy/load_functions.py" &
 
 cd /app/backend
 exec bash start.sh

@@ -19,7 +19,7 @@ import urllib.request
 from pathlib import Path
 
 BASE = os.environ.get("LOADER_BASE_URL", "http://127.0.0.1:8080")
-FUNCTIONS_DIR = Path(os.environ.get("LOADER_FUNCTIONS_DIR", "/app/chat-functions"))
+FUNCTIONS_DIR = Path(os.environ.get("LOADER_FUNCTIONS_DIR", "/app/chat/functions"))
 MARKER = Path(os.environ.get("LOADER_MARKER", "/app/backend/data/.chat-first-start-done"))
 
 

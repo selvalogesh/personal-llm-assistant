@@ -1,2 +1,4 @@
-# Shell scripts run on the Linux server: keep LF endings whatever the checkout platform.
+# Shell scripts and the settings bash sources run on the Linux server: keep LF endings whatever the checkout
+# platform.
 *.sh text eol=lf
+*.env text eol=lf
