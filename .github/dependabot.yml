@@ -1,0 +1,8 @@
+# Opens a pull request when Open WebUI or Kokoro releases a new version (CR-2 §3.4). Before merging one, run the
+# local stack check (ENVIRONMENT.md); after it, paste deploy/compose.yaml into the stack, then Pull, Down, Up.
+version: 2
+updates:
+  - package-ecosystem: docker-compose
+    directory: /deploy
+    schedule:
+      interval: weekly

@@ -1,0 +1,40 @@
+# Tests every pull request and every push to main. On main, once the tests pass, moves the branch "stable" to that
+# commit: the server's init fetches "stable" on every Up (CR-2 §3.4), so it only runs code whose tests passed.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch: # rerun by hand; only a run on main moves stable
+
+# One run at a time per branch, so stable always ends on the newest green commit of main.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      - run: python -m pytest -q
+
+  stable:
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      # --force: main is sometimes amended or squashed, and stable is only a pointer nobody commits to.
+      - run: git push --force origin HEAD:refs/heads/stable
