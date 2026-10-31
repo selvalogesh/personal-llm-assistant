@@ -60,7 +60,8 @@ prepare each (you) step and verify it afterwards.
      with this password), so nobody can claim admin by signing up first.
    - Check: the webui container's log (OMV Compose → Files → Chat → Logs) shows `entrypoint: running <commit>
      (stable), Open WebUI <version>`, `[load_functions] first start: sign-ups on, new accounts wait for approval`,
-     four functions installed, and `[load_functions] done`.
+     four functions installed, and `[load_functions] done`. The first start also downloads the document embedding
+     model (about 380 MB, into `data/cache`), so document search is ready a minute or two later.
 4. **Address (you):** point `openai.selvalogesh.com` at `CHAT_UI_PORT` on this host with your proxy or tunnel. It
    must pass WebSockets (live replies and call mode use them); with Nginx, also allow uploads of 50 MB or more
    (`client_max_body_size`).
@@ -104,14 +105,33 @@ prepare each (you) step and verify it afterwards.
   to `stable` once the fix is on `main`. This works only within one Open WebUI version: Open WebUI migrates its
   database when it upgrades, so undoing an upgrade means restoring `data/` from the backup with the old tag.
 - **Rotating the OpenRouter key:** create the new key on OpenRouter, replace `secrets/openrouter-api-key`, then
-  delete the old key on OpenRouter. The Router reads the file on every message. Document search keeps its own copy
-  (Open WebUI saved it on the first start), so also paste the new key in Admin → Settings → Documents → API key.
+  delete the old key on OpenRouter. The Router reads the file on every message; nothing else holds the key (CR-3).
+- **Document search runs on the server** with `BAAI/bge-small-en-v1.5` (CR-3); no document text goes to
+  OpenRouter. Embedding a long PDF takes the N100 a minute or more. Changing the model later (Admin → Settings →
+  Documents) means clicking **Reindex knowledge base vectors** afterwards; until then old documents silently find
+  nothing, and files attached straight to a chat must be uploaded again.
 - **Changing the admin password:** change it in the app (Settings → Account) **and** in
   `secrets/webui-admin-password`. The startup loader signs in with the file's password; if they differ, the log
   shows the functions failing to update until both match.
 - **Backups:** `data/` holds everything people made (accounts, chats, files). Include `/StorageDrive/Chat` in the
   server's backup; `secrets/` can be recreated, but keep the admin password in your password manager. `app/` is
   fetched again on every Up.
+
+## Once: switch the running server to on-server embeddings (CR-3, you)
+
+A server set up before CR-3 has OpenRouter embeddings saved in its database, and the new `settings.env` doesn't
+change saved settings. After the CR-3 update (Down, Up), in Admin → Settings → Documents, in this order:
+
+1. With the engine still on OpenAI, **clear the API key** field and save. That deletes Open WebUI's copy of the
+   OpenRouter key; switching the engine alone would leave it in the database.
+2. Set the embedding engine to **Default (SentenceTransformers)** and the model to `BAAI/bge-small-en-v1.5`, then
+   save. It downloads the model (about 380 MB); wait until the save finishes.
+3. Click **Reindex knowledge base vectors**.
+4. Tell people that files they attached straight to a chat before today must be uploaded again: those find nothing
+   now, without an error.
+
+Check: ask a question about a document in a knowledge base and get an answer from it; Admin → Settings → Documents
+shows the engine as Default and no API key.
 
 ## Troubleshooting
 
@@ -122,6 +142,7 @@ prepare each (you) step and verify it afterwards.
 | Up fails; init's log says "GitHub has no …" | `CHAT_REF` is mistyped or a short hash: set it to `stable`, a tag or a full commit hash |
 | init's log says "couldn't reach GitHub; keeping …" | GitHub or the network was down: the previous code runs. Down, Up again later to update |
 | The new code doesn't show after an update | CI hadn't passed yet (so `stable` hadn't moved), or only Up was run: check `app/DEPLOYED`, then Down, Up |
+| Questions about a document get answers that ignore it | The embedding model changed since it was added (the CR-3 switch, or a later model change): Reindex knowledge base vectors, or upload a chat's file again |
 | A reply says the key was rejected | `secrets/openrouter-api-key` is wrong or the key was deleted on OpenRouter |
 | Replies end with "free fallback" in the status line | Credits or the monthly budget ran out: top up on OpenRouter, or wait for the reset |
 | Replies say "logging provider" | No private provider could answer that chain, so a logging one did (R6 allows this as a last resort) |

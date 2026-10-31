@@ -18,7 +18,7 @@ server setup (§6, phase 7) is the owner's next step.**
 | R7 | Budget: **$10/month for everyone combined**, the existing OpenRouter workspace budget | Owner |
 | R8 | Web search through OpenRouter's web plugin | Owner |
 | R9 | Images: understand uploaded images (vision), generate images with image models, and draw images as SVG or Python code | Owner |
-| R10 | Documents: embeddings for document search go through OpenRouter, not the server | Owner |
+| R10 | Documents: embeddings for document search go through OpenRouter, not the server. **Superseded by [CR-3](CR-3.md):** embeddings on the server with bge-small-en-v1.5 | Owner |
 | R11 | Routing: a new Open WebUI pipe function. `openrouter-routing-stack` is not reused | Owner |
 | R12 | Deployment like finance-analysis CR-5 §7: public repo; GitHub Actions builds a public GHCR image (linux/amd64); OMV Compose stack; updates are a manual Pull, then Up. **Superseded by [CR-2](CR-2.md):** the official Open WebUI image, our files fetched from git | Owner |
 | R13 | Secrets (the OpenRouter key and others) come from read-only files in `/StorageDrive/Chat/secrets`, never from the compose environment, the same way as finance. Ports are configurable. The owner handles the reverse proxy, TLS and DNS | Owner (first the compose env; changed to files, D5) |
@@ -35,7 +35,7 @@ finance already run there.
 |---|---|---|
 | R5 and R7 | Images, paid searches and long roleplay will likely use up the $10 before the month ends | When OpenRouter answers 402 (out of credits), the pipe switches to free models. Per-user usage is visible on OpenRouter (§3.1) |
 | R5 and R6 | Few permissive models are served by providers that don't log | Each turn first asks only for non-logging providers. If none can serve the chain, it asks again with logging allowed (§3.1) |
-| R6 and R10 | Documents leave the server in chunks to be embedded | Accepted by the owner. Embedding requests ask for non-logging providers where Open WebUI allows it (open item O3) |
+| R6 and R10 | Documents leave the server in chunks to be embedded | Accepted by the owner. Embedding requests ask for non-logging providers where Open WebUI allows it (open item O3). **Resolved by [CR-3](CR-3.md):** documents no longer leave the server |
 | R1 | A hostname containing "openai" can be flagged by browser phishing filters | Accepted by the owner |
 | R5 | No setup can guarantee zero refusals | Low-refusal models are first in every default chain. There's no refusal detector (decision D3) |
 | R15 and the N100 | Whisper and Kokoro share 4 cores with ownCloud and finance | Small English models. Expect a few seconds per voice turn, and longer when several people use voice at once |
@@ -116,6 +116,8 @@ finance already run there.
   matplotlib) runs in the browser's code runner. No extra cost beyond the chat tokens.
 
 ### 3.3 Documents (R10)
+
+**Superseded by [CR-3](CR-3.md):** embeddings run on the server with `BAAI/bge-small-en-v1.5`.
 - Open WebUI's built-in document search, with embeddings from OpenRouter's OpenAI-compatible `/embeddings`
   (`voyageai/voyage-4-lite`, $0.02 per 1M tokens, 1024 dimensions; tested). Vectors are stored in the bundled
   ChromaDB on the server. Open WebUI sends only `model` and `input`, so embeddings use OpenRouter's default

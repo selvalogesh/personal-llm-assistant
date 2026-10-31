@@ -21,7 +21,7 @@ Each file is mode 600 and holds only its value. `init` creates the folder and pl
 
 | File | What | Read by |
 |---|---|---|
-| `openrouter-api-key` | The **chat-server** OpenRouter key | The Router on every message; document search (copied into Open WebUI's settings on the first start) |
+| `openrouter-api-key` | The **chat-server** OpenRouter key | The Router only, on every message (since CR-3; the entrypoint checks it isn't a placeholder) |
 | `webui-admin-password` | The admin account's password | Open WebUI (creates the admin on the first start); the function loader (signs in on every start) |
 | `webui-secret-key` | Random session key (`init` generates it) | Open WebUI; changing it signs everyone out |
 
@@ -40,7 +40,7 @@ that, change them in Admin → Settings.
 | `BYPASS_MODEL_ACCESS_CONTROL` | `true` | Pipe models are otherwise admin-only; everyone gets the same access (R2) |
 | `ENABLE_SIGNUP`, `DEFAULT_USER_ROLE` | `true`, `pending` | New accounts wait for approval (R3) |
 | `ENABLE_WEB_SEARCH`, `ENABLE_IMAGE_GENERATION` | `false` | Both go through the Router's toggles instead |
-| `RAG_EMBEDDING_ENGINE`, `RAG_OPENAI_API_BASE_URL`, `RAG_EMBEDDING_MODEL` | `openai`, OpenRouter, `voyageai/voyage-4-lite` | Document search via OpenRouter (R10) |
+| `RAG_EMBEDDING_ENGINE`, `RAG_EMBEDDING_MODEL` | local (empty), `BAAI/bge-small-en-v1.5` | Document search on the server; nothing goes to OpenRouter (CR-3) |
 | `AUDIO_STT_ENGINE` | local (empty); the model is `CHAT_WHISPER_MODEL` | Dictation and call mode (R15) |
 | `AUDIO_TTS_ENGINE`, `AUDIO_TTS_OPENAI_API_BASE_URL`, `AUDIO_TTS_VOICE` | `openai`, `http://kokoro:8880/v1`, `af_heart` | Read aloud and call mode through Kokoro (R15) |
 | `ENABLE_CODE_INTERPRETER`, `CODE_INTERPRETER_ENGINE` | `true`, `pyodide` | Python charts and drawings run in the browser (R9) |
