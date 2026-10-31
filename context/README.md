@@ -10,3 +10,4 @@ OpenRouter keys and budget, and the VS Code setup.
 | CR | Plan | Scope |
 |---|---|---|
 | CR-1 | [CR-1.md](CR-1.md) | The family chat service: Open WebUI, routing pipe, voice, images, documents, home-server deploy |
+| CR-2 | [CR-2.md](CR-2.md) | Official Open WebUI image, unmodified; our files fetched from git on every Up; no image of our own |
