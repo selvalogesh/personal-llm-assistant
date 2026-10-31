@@ -27,6 +27,9 @@ WEBUI_ADMIN_PASSWORD="$(read_secret webui-admin-password)"
 # The Router reads the key file itself on every request; document search needs it in Open WebUI's settings.
 RAG_OPENAI_API_KEY="$(read_secret openrouter-api-key)"
 export WEBUI_SECRET_KEY WEBUI_ADMIN_PASSWORD RAG_OPENAI_API_KEY
+# Kokoro needs no key, but Open WebUI's OpenAI-style speech client sends one (set here, not in the Dockerfile,
+# where the name trips the secrets linter).
+export AUDIO_TTS_OPENAI_API_KEY="${AUDIO_TTS_OPENAI_API_KEY:-not-needed}"
 
 python /app/chat-start/load_functions.py &
 

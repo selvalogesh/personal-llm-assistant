@@ -27,7 +27,6 @@ ENV \
     WHISPER_MODEL=base.en \
     AUDIO_TTS_ENGINE=openai \
     AUDIO_TTS_OPENAI_API_BASE_URL=http://kokoro:8880/v1 \
-    AUDIO_TTS_OPENAI_API_KEY=not-needed \
     AUDIO_TTS_MODEL=kokoro \
     AUDIO_TTS_VOICE=af_heart \
     # Python for charts and drawn images runs in the browser (R9)
