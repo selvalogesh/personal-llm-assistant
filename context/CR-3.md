@@ -1,8 +1,8 @@
 # CR-3: Document embeddings on the server
 
 Document search embeds with Open WebUI's own embedding model, running in the `webui` container, instead of
-sending document chunks to OpenRouter's `/embeddings`. This replaces CR-1's R10 and §3.3. **State: planned, not
-started.**
+sending document chunks to OpenRouter's `/embeddings`. This replaces CR-1's R10 and §3.3. **State: built and verified on
+the laptop; on the server, the one-time switch (§3.3, phase 5) is the owner's next step.**
 
 ## 1. Requirements
 
@@ -88,11 +88,18 @@ into `main` once phase 4 passes.
 | 0 | **Plan** | This file and the [index](README.md) entry | Done |
 | 1 | **Spike: O1–O4** on the laptop | Findings in §4; the design adjusted where needed | Done (§4; D6 added, sizes and chat files corrected) |
 | 2 | **Settings and startup** | `settings.env` (§3.1), `entrypoint.sh` (§3.2); tests: the engine is local and no `RAG_OPENAI_*` setting remains | Done |
-| 3 | **Docs** | `deploy/README.md` (the one-time switch as a (you) step, key rotation without the Documents copy, a troubleshooting row), `ENVIRONMENT.md` (settings table, secrets table: the key is read by the Router only), and "superseded by CR-3" notes on CR-1's R10, §2 (R6 and R10 row) and §3.3 | Not started |
-| 4 | **Local stack check** | A fresh stack embeds and answers from an uploaded PDF with no `/embeddings` call on OpenRouter's activity; a stack switched from the OpenAI engine, as in §3.3 | Not started |
-| 5 | **Server (owner)** | After CR-2's cutover: Down, Up, then the §3.3 switch, and a question about an uploaded PDF | Not started |
+| 3 | **Docs** | `deploy/README.md` (the one-time switch as a (you) step, key rotation without the Documents copy, a troubleshooting row), `ENVIRONMENT.md` (settings table, secrets table: the key is read by the Router only), and "superseded by CR-3" notes on CR-1's R10, §2 (R6 and R10 row) and §3.3 | Done |
+| 4 | **Local stack check** | A fresh stack embeds and answers from a knowledge base with the local engine; a stack switched from the OpenAI engine, as in §3.3 (the spike) | Done (§6) |
+| 5 | **Server (owner)** | Down, Up, then the runbook's "Once: switch the running server to on-server embeddings", and a question about a document | Not started |
 
 ## 6. Verification
+
+**Results on the laptop (2026-10-31):** 53 offline tests pass. The switched install is the spike (§4). A **fresh
+install** from the working tree downloaded the model during its first start (`/health` answered after 109 s; Docker
+showed the container unhealthy until its next check), loaded it, and saved the local engine with bge-small and no
+OpenRouter key. A knowledge base of this repo's docs embedded in 6 s and scored 12/12 in the top 3. A chat on Auto
+with the knowledge base answered from it, with a citation ("`af_heart` … [1]"). No process in `webui` had the
+OpenRouter key in its environment.
 
 | Check | How |
 |---|---|
