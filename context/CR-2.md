@@ -2,8 +2,9 @@
 
 The server runs Open WebUI's official image, unmodified, pulled from Open WebUI's own registry. Our files (the
 functions, the startup scripts and the settings) come from this repo, fetched on every Up, instead of being baked
-into a GHCR image of our own. This replaces CR-1's deployment: R12, §3.5 and §3.6. **State: built and verified on
-the laptop; the cutover on the server (§6, phase 7) is the owner's next step.**
+into a GHCR image of our own. This replaces CR-1's deployment: R12, §3.5 and §3.6. **State: done; the server runs
+the official image with our files fetched from `stable` (cutover on 2026-10-31). Open: Dependabot's first pull
+request (O4).**
 
 ## 1. Requirements
 
@@ -182,7 +183,7 @@ into `main` once phase 6 passes.
 | 4 | **CI** | `ci.yml` (pytest; on `main`, move `stable`); `dependabot.yml`; delete `deploy/Dockerfile`, `.dockerignore`, `image.yml` | Done |
 | 5 | **Docs** | `deploy/README.md` (diagram, routines, rollback, troubleshooting for the fetch and the guard), `ENVIRONMENT.md` (`settings.env`, `CHAT_REF`, local check), `CLAUDE.md` (a guardrail for the official image) and `README.md`, and "superseded by CR-2" notes on CR-1's R12, §3.5 and §3.6 | Done |
 | 6 | **Local stack check** | CR-1's local check through `compose.local.yaml`, plus a real fetch from GitHub (of this branch, since `stable` appears only after the merge) | Done (§7) |
-| 7 | **Cutover (owner)** | Paste `compose.yaml` and the environment (with `CHAT_REF=stable`) into the stack, then Pull, Down, Up, and the runbook's "Done when". `data/` and `secrets/` carry over. Then, optionally, delete the GHCR package | Not started |
+| 7 | **Cutover (owner)** | Paste `compose.yaml` and the environment (with `CHAT_REF=stable`) into the stack, then Pull, Down, Up, and the runbook's "Done when". `data/` and `secrets/` carry over. Then, optionally, delete the GHCR package | Done (2026-10-31); GHCR package deletion pending |
 
 ## 7. Verification
 
