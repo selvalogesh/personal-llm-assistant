@@ -1,12 +1,14 @@
 """
 title: Router
 author: selvalogesh
-version: 1.0.0
+version: 1.1.0
 description: Sends each chat turn to OpenRouter through a chain of models. Non-logging providers first, the free chain when credits or paid routes fail, and a plain message instead of a raw error (CR-1 §3.1).
 """
 
+import asyncio
 import json
 import logging
+import re
 import time
 from typing import AsyncGenerator, Optional
 
@@ -38,7 +40,12 @@ FRIENDLY = {
     # Notes under a reply the length limit cut off (finish_reason "length")
     "cut_thinking": "The model used its whole reply limit thinking and never wrote the answer. Ask again, or split the request into smaller steps.",
     "cut": "The reply hit the length limit and stops here. Say \"continue\" to get the rest.",
+    "stopped": "Stopped after {minutes} of thinking, as you asked. Ask again, or split the request into smaller steps.",
 }
+
+# Low credits: OpenRouter refuses a request whose full output it can't cover, and says how much it can.
+AFFORD = re.compile(r"can only afford (\d+)")
+MIN_AFFORD = 1000  # below this a reply is barely a paragraph: the free chain answers better
 
 
 class RouteError(Exception):
@@ -64,6 +71,11 @@ def classify_error(status: int, detail: str) -> str:
     if status == 429:
         return "busy"
     return "other"
+
+
+def minutes(seconds: float) -> str:
+    n = max(1, round(seconds / 60))
+    return f"{n} minute" if n == 1 else f"{n} minutes"
 
 
 def split_models(value: str) -> list[str]:
@@ -117,9 +129,9 @@ class Pipe:
             default="qwen/qwen3.7-flash",
             description="Titles, tags and follow-up suggestions",
         )
-        MAX_TOKENS: int = Field(
-            default=16384,
-            description="Reply cap, thinking included: thinking models can spend thousands of tokens before answering",
+        THINKING_LIMIT_SECONDS: float = Field(
+            default=120,
+            description="Ask the user whether to keep waiting when a model has thought this long without answering; 0 never asks",
         )
         WEB_ENGINE: str = Field(default="parallel", description="OpenRouter web plugin engine")
         WEB_MAX_RESULTS: int = 3
@@ -143,6 +155,7 @@ class Pipe:
         __user__: Optional[dict] = None,
         __metadata__: Optional[dict] = None,
         __event_emitter__=None,
+        __event_call__=None,
         __task__=None,
         __request__=None,
     ):
@@ -163,11 +176,12 @@ class Pipe:
         if body.pop(IMAGE_FLAG, False):
             return self._image(body, key, user_id, __event_emitter__, __request__, __metadata__, __user__)
 
-        return self._chat(body, chain_id, key, user_id, bool(body.pop(WEB_FLAG, False)), __event_emitter__)
+        web = bool(body.pop(WEB_FLAG, False))
+        return self._chat(body, chain_id, key, user_id, web, __event_emitter__, __event_call__)
 
     # ---------- chat ----------
 
-    async def _chat(self, body, chain_id, key, user_id, web, emitter) -> AsyncGenerator[str, None]:
+    async def _chat(self, body, chain_id, key, user_id, web, emitter, ask=None) -> AsyncGenerator[str, None]:
         messages = body.get("messages", [])
         models = split_models(getattr(self.valves, CHAINS[chain_id][1]))
         if has_images(messages):
@@ -186,13 +200,15 @@ class Pipe:
                     payload = self._payload(body, batch, user_id, data_collection, web)
                     started = False
                     try:
-                        async for piece, info in self._stream(payload, key):
+                        async for piece, info in self._attempt(payload, key, ask):
                             if piece:
                                 started = True
                                 yield piece
                             elif info is not None:
                                 await self._footer(emitter, info, label, data_collection, web)
-                                if info["finish_reason"] == "length":
+                                if info["stopped"]:
+                                    yield f"\n\n_{FRIENDLY['stopped'].format(minutes=minutes(info['stopped']))}_"
+                                elif info["finish_reason"] == "length":
                                     # Never end silently on a cut reply, least of all one that is only thinking.
                                     yield f"\n\n_{FRIENDLY['cut' if info['answered'] else 'cut_thinking']}_"
                         return
@@ -220,11 +236,12 @@ class Pipe:
             "models": models,
             "messages": body.get("messages", []),
             "stream": True,
-            "max_tokens": min(int(body.get("max_tokens") or self.valves.MAX_TOKENS), self.valves.MAX_TOKENS),
             "usage": {"include": True},
             "provider": {"data_collection": data_collection, "allow_fallbacks": True},
         }
-        for name in ("temperature", "top_p", "frequency_penalty", "presence_penalty", "stop", "seed"):
+        # No max_tokens of our own: thinking counts against it, and a cap left thinking models without an answer.
+        # The thinking time limit (_stream) and the monthly budget bound the cost instead (CR-1 D13).
+        for name in ("max_tokens", "temperature", "top_p", "frequency_penalty", "presence_penalty", "stop", "seed"):
             if body.get(name) is not None:
                 payload[name] = body[name]
         if user_id:
@@ -235,11 +252,36 @@ class Pipe:
             ]
         return payload
 
-    async def _stream(self, payload: dict, key: str):
+    async def _attempt(self, payload: dict, key: str, ask=None):
+        """_stream, asked once more with a smaller max_tokens when low credits can't cover the model's full output."""
+        streamed = False
+        try:
+            async for item in self._stream(payload, key, ask):
+                streamed = True
+                yield item
+        except RouteError as e:
+            match = AFFORD.search(e.detail)
+            afford = int(match.group(1)) if match else 0
+            if streamed or e.kind != "credits" or afford < MIN_AFFORD or afford >= payload.get("max_tokens", afford + 1):
+                raise
+            log.info("router: low credits, asking again with max_tokens=%d", afford)
+            async for item in self._stream({**payload, "max_tokens": afford}, key, ask):
+                yield item
+
+    async def _stream(self, payload: dict, key: str, ask=None):
         """Yields (text, None) for each piece of the reply, then (None, info) with model, tokens and cost, why the
-        reply ended, and whether any answer (not just thinking) came."""
-        info = {"model": "", "tokens": 0, "cost": 0.0, "finish_reason": None, "answered": False}
+        reply ended, whether any answer (not just thinking) came, and how long it had thought if the user stopped it.
+
+        With `ask` (Open WebUI's __event_call__), a model that has thought for THINKING_LIMIT_SECONDS without answering
+        makes a dialog ask the user to keep waiting or stop. The reply keeps streaming while the dialog is open, and it
+        closes by itself once the answer starts."""
+        info = {"model": "", "tokens": 0, "cost": 0.0, "finish_reason": None, "answered": False, "stopped": 0.0}
         in_reasoning = False
+        limit = self.valves.THINKING_LIMIT_SECONDS if ask else 0
+        started_at = time.monotonic()
+        deadline = started_at + limit if limit > 0 else None
+        question: Optional[asyncio.Task] = None
+        pump: Optional[asyncio.Task] = None
         try:
             async with self._client() as client:
                 async with client.stream(
@@ -248,7 +290,31 @@ class Pipe:
                     if response.status_code != 200:
                         detail = (await response.aread()).decode(errors="replace")
                         raise RouteError(classify_error(response.status_code, detail), detail, response.status_code)
-                    async for line in response.aiter_lines():
+                    lines: asyncio.Queue = asyncio.Queue()
+                    pump = asyncio.create_task(self._pump(response, lines))
+                    while True:
+                        if question and question.done():
+                            answer = None if question.cancelled() or question.exception() else question.result()
+                            question = None
+                            if answer is False:  # "Cancel" in the dialog: stop thinking
+                                info["stopped"] = time.monotonic() - started_at
+                                break
+                            deadline = time.monotonic() + limit  # kept waiting (or the tab went away): ask again later
+                        wait = None
+                        if question:
+                            wait = 1.0  # look at the dialog again every second
+                        elif deadline and not info["answered"]:
+                            wait = max(deadline - time.monotonic(), 0)
+                        try:
+                            line = await asyncio.wait_for(lines.get(), wait)
+                        except asyncio.TimeoutError:
+                            if not question and not info["answered"]:
+                                question = asyncio.create_task(self._ask_to_wait(ask, time.monotonic() - started_at))
+                            continue
+                        if isinstance(line, Exception):
+                            raise line
+                        if line is None:
+                            break
                         if not line.startswith("data:"):
                             continue  # blank lines and ": OPENROUTER PROCESSING" keep-alives
                         data = line[5:].strip()
@@ -279,13 +345,44 @@ class Pipe:
                                     in_reasoning = False
                                     yield "\n</think>\n\n", None
                                 info["answered"] = True
+                                if question:
+                                    question.cancel()  # the answer started: Open WebUI closes the dialog
                                 yield content, None
                             info["finish_reason"] = choice.get("finish_reason") or info["finish_reason"]
         except httpx.HTTPError as e:
             raise RouteError("network", str(e)) from e
+        finally:
+            for task in (question, pump):
+                if task:
+                    task.cancel()
         if in_reasoning:
             yield "\n</think>\n\n", None
         yield None, info
+
+    @staticmethod
+    async def _pump(response: httpx.Response, lines: asyncio.Queue) -> None:
+        """Reads the stream into `lines`, ending with None, or with the error that broke it."""
+        try:
+            async for line in response.aiter_lines():
+                await lines.put(line)
+        except Exception as e:
+            await lines.put(e)
+            return
+        await lines.put(None)
+
+    @staticmethod
+    async def _ask_to_wait(ask, elapsed: float):
+        """True to keep waiting, False to stop; anything else (tab closed, no answer) keeps the model going."""
+        return await ask(
+            {
+                "type": "confirmation",
+                "data": {
+                    "title": "Still thinking",
+                    "message": f"The model has been thinking for {minutes(elapsed)} and hasn't started the answer. "
+                    "Confirm to keep waiting, or cancel to stop it.",
+                },
+            }
+        )
 
     async def _footer(self, emitter, info, label, data_collection, web):
         if not (emitter and self.valves.SHOW_FOOTER):

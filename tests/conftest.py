@@ -52,6 +52,39 @@ def usage(model="vendor/model", tokens=42, cost=0.0012) -> dict:
     return {"model": model, "choices": [], "usage": {"total_tokens": tokens, "cost": cost}}
 
 
+class Slow(httpx.AsyncByteStream):
+    """An event-stream body that waits `pause` seconds before each event, for the thinking time limit."""
+
+    def __init__(self, *chunks: dict, pause: float):
+        self.events = [f"data: {json.dumps(chunk)}\n\n".encode() for chunk in chunks] + [b"data: [DONE]\n\n"]
+        self.pause = pause
+
+    async def __aiter__(self):
+        for event in self.events:
+            await asyncio.sleep(self.pause)
+            yield event
+
+
+class Asker:
+    """Open WebUI's __event_call__: answers each dialog from `answers` (None waits until cancelled)."""
+
+    def __init__(self, *answers):
+        self.answers = list(answers)
+        self.questions: list[dict] = []
+        self.cancelled = 0
+
+    async def __call__(self, event: dict):
+        self.questions.append(event)
+        answer = self.answers.pop(0) if self.answers else True
+        if answer is None:
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                self.cancelled += 1
+                raise
+        return answer
+
+
 class FakeOpenRouter:
     """Answers each chat request from a queue of (status, body) and records every request payload."""
 
@@ -72,6 +105,8 @@ class FakeOpenRouter:
             return httpx.Response(status, json=body)
         self.requests.append(payload)
         status, body = self.responses.pop(0) if self.responses else (429, {"error": {"message": "busy"}})
+        if isinstance(body, Slow):
+            return httpx.Response(status, stream=body, headers={"content-type": "text/event-stream"})
         if isinstance(body, bytes):
             return httpx.Response(status, content=body, headers={"content-type": "text/event-stream"})
         return httpx.Response(status, json=body)

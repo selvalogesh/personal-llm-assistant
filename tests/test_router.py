@@ -1,6 +1,6 @@
 import base64
 
-from conftest import Emitter, FakeOpenRouter, collect, delta, load, run, sse, usage
+from conftest import Asker, Emitter, FakeOpenRouter, Slow, collect, delta, load, run, sse, usage
 
 router = load("functions/router.py")
 
@@ -12,13 +12,15 @@ def make_pipe(fake: FakeOpenRouter, key_file, **valves):
     return pipe
 
 
-def chat(pipe, model="router.auto", content="hi", emitter=None, task=None, **extra):
+def chat(pipe, model="router.auto", content="hi", emitter=None, task=None, ask=None, **extra):
     body = {"model": model, "messages": [{"role": "user", "content": content}], **extra}
-    return run(collect_pipe(pipe, body, emitter, task))
+    return run(collect_pipe(pipe, body, emitter, task, ask))
 
 
-async def collect_pipe(pipe, body, emitter, task):
-    result = await pipe.pipe(body, __user__={"id": "user-1"}, __event_emitter__=emitter, __task__=task)
+async def collect_pipe(pipe, body, emitter, task, ask=None):
+    result = await pipe.pipe(
+        body, __user__={"id": "user-1"}, __event_emitter__=emitter, __event_call__=ask, __task__=task
+    )
     return await collect(result)
 
 
@@ -42,7 +44,7 @@ def test_reasoning_is_wrapped_in_think_tags(key_file):
 
 
 def test_reply_cut_while_thinking_says_there_is_no_answer(key_file):
-    # The length limit ran out mid-thought (seen on the server with DeepSeek V4.1 Flash and a 4,096 cap)
+    # A length limit ran out mid-thought (seen on the server with DeepSeek V4.1 Flash and the old 4,096 cap)
     fake = FakeOpenRouter([(200, sse(delta(reasoning="Hmm, first"), delta(reasoning=" the arms", finish="length"), usage()))])
     reply = chat(make_pipe(fake, key_file))
     assert reply == f"<think>\nHmm, first the arms\n</think>\n\n\n\n_{router.FRIENDLY['cut_thinking']}_"
@@ -58,13 +60,67 @@ def test_finished_reply_gets_no_note(key_file):
     assert chat(make_pipe(fake, key_file)) == "Done"
 
 
-def test_first_request_denies_logging_and_carries_user_and_cap(key_file):
+THINKING = [delta(reasoning=f"step {i}. ") for i in range(8)]
+
+
+def test_long_thinking_asks_and_stops_when_told(key_file):
+    fake = FakeOpenRouter([(200, Slow(*THINKING, delta("Answer"), usage(), pause=0.05))])
+    ask = Asker(False)
+    reply = chat(make_pipe(fake, key_file, THINKING_LIMIT_SECONDS=0.12), ask=ask)
+    assert len(ask.questions) == 1
+    assert ask.questions[0]["type"] == "confirmation"
+    assert "Answer" not in reply
+    assert reply.endswith(f"</think>\n\n\n\n_{router.FRIENDLY['stopped'].format(minutes='1 minute')}_")
+
+
+def test_long_thinking_keeps_going_when_told_and_asks_again(key_file):
+    fake = FakeOpenRouter([(200, Slow(*THINKING, delta("Answer"), usage(), pause=0.05))])
+    ask = Asker(True, True, True, True, True)
+    reply = chat(make_pipe(fake, key_file, THINKING_LIMIT_SECONDS=0.12), ask=ask)
+    assert reply.endswith("Answer")
+    assert len(ask.questions) >= 2
+
+
+def test_dialog_closes_by_itself_when_the_answer_starts(key_file):
+    fake = FakeOpenRouter([(200, Slow(*THINKING, delta("Answer"), usage(), pause=0.05))])
+    ask = Asker(None)  # nobody answers the dialog
+    reply = chat(make_pipe(fake, key_file, THINKING_LIMIT_SECONDS=0.2), ask=ask)
+    assert reply.endswith("Answer")
+    assert len(ask.questions) == 1 and ask.cancelled == 1
+
+
+def test_quick_answers_never_ask(key_file):
+    ask = Asker(False)
+    assert chat(make_pipe(FakeOpenRouter([OK]), key_file), ask=ask) == "Hello there"
+    assert ask.questions == []
+
+
+def test_low_credits_ask_again_with_what_they_cover(key_file):
+    afford = (402, {"error": {"message": "You requested up to 65536 tokens, but can only afford 3000."}})
+    fake = FakeOpenRouter([afford, OK])
+    emitter = Emitter()
+    assert chat(make_pipe(fake, key_file), emitter=emitter) == "Hello there"
+    assert "max_tokens" not in fake.requests[0]
+    assert fake.requests[1]["max_tokens"] == 3000
+    assert fake.requests[1]["models"] == fake.requests[0]["models"]
+    assert "free fallback" not in emitter.statuses()[0]
+
+
+def test_almost_no_credits_go_to_the_free_chain(key_file):
+    afford = (402, {"error": {"message": "You requested up to 65536 tokens, but can only afford 120."}})
+    fake = FakeOpenRouter([afford, OK])
+    pipe = make_pipe(fake, key_file, AUTO_MODELS="a", FREE_MODELS="f1")
+    assert chat(pipe) == "Hello there"
+    assert [r["models"] for r in fake.requests] == [["a"], ["f1"]]
+
+
+def test_first_request_denies_logging_and_carries_user(key_file):
     fake = FakeOpenRouter([OK])
-    chat(make_pipe(fake, key_file, MAX_TOKENS=1000), max_tokens=5000, temperature=0.3)
+    chat(make_pipe(fake, key_file), temperature=0.3)
     payload = fake.requests[0]
     assert payload["provider"] == {"data_collection": "deny", "allow_fallbacks": True}
     assert payload["user"] == "user-1"
-    assert payload["max_tokens"] == 1000
+    assert "max_tokens" not in payload  # thinking counts against a cap (CR-1 D13)
     assert payload["temperature"] == 0.3
     assert payload["usage"] == {"include": True}
     assert "plugins" not in payload
@@ -195,3 +251,9 @@ def test_create_image_tries_the_next_model_on_failure(key_file):
 def test_create_image_needs_a_description(key_file):
     fake = FakeOpenRouter()
     assert "Describe the image" in chat(make_pipe(fake, key_file), content="  ", **{router.IMAGE_FLAG: True})
+
+
+def test_a_chats_own_max_tokens_is_passed_on(key_file):
+    fake = FakeOpenRouter([OK])
+    chat(make_pipe(fake, key_file), max_tokens=5000)
+    assert fake.requests[0]["max_tokens"] == 5000

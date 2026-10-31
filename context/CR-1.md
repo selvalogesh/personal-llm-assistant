@@ -96,9 +96,12 @@ finance already run there.
 - **Footer per reply:** the model that answered, plus tokens and cost.
 - **Per-user usage:** each request carries the Open WebUI user id in OpenRouter's `user` field, so usage can be
   split by person on OpenRouter.
-- **`max_tokens` cap** in the Valves (16,384), which bounds what one reply can cost. Thinking counts against it,
-  so it leaves room for thinking models to finish (D13). A reply cut at the cap gets a note under it, and one cut
-  while still thinking says that no answer was written.
+- **A thinking time limit instead of a token cap (D13).** No `max_tokens` is sent (unless a chat sets its own), so
+  thinking can't use up the reply. When a model has thought for `THINKING_LIMIT_SECONDS` (2 minutes) without
+  starting the answer, an Open WebUI dialog asks whether to keep waiting (asked again every 2 minutes) or stop.
+  The thinking keeps streaming meanwhile, and the dialog closes by itself when the answer starts. A reply cut at a
+  length limit gets a note under it. When low credits can't cover a model's full output ("can only afford N
+  tokens"), the same models are asked again with that many tokens before the Free chain.
 - Open WebUI's direct OpenRouter model list (300+ models) is hidden from users, so only the pipe's options appear
   and the budget stays predictable.
 
@@ -254,5 +257,5 @@ phone check in the runbook's "Done when".
 | D10 | `BYPASS_MODEL_ACCESS_CONTROL=true` | Pipe models are admin-only otherwise; all users have the same access (R2) |
 | D11 | `init` generates `webui-secret-key` itself; the other secrets start as placeholders `webui` refuses | A session key nobody needs to know; the rest must be the owner's |
 | D12 | Voice notes are inline mp3 data URLs (about 1 MB a minute), capped at 1,200 characters | Plays inside the embed without a signed-in request; the cap bounds chat size and Kokoro time on the N100 |
-| D13 | `MAX_TOKENS` 16,384 (was 4,096), and a note under any reply cut at the cap. `reasoning.effort` is not sent | On the server, DeepSeek V4.1 Flash spent the whole 4,096 thinking about an SVG and wrote no answer, and the chat showed only the thinking. A full 16k reply on it costs about $0.008. `effort` would also switch thinking on for models that don't think by default |
+| D13 | No token cap: a 2-minute thinking time limit with a keep-waiting-or-stop dialog, a note under any cut reply, and a retry with what low credits can afford. `reasoning.effort` is not sent | On the server, DeepSeek V4.1 Flash spent the whole 4,096-token cap thinking about an SVG and wrote no answer, and the chat showed only the thinking. Owner's choice: limit thinking by time and let the user decide, not by tokens. `effort` would also switch thinking on for models that don't think by default |
 | D13 | The repo and the GHCR package are public (they started private) | Owner's choice: no secrets in either (D5), public packages are free to store, and the server pulls without a token. A package can't be made private again |
