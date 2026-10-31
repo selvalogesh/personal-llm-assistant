@@ -2,5 +2,6 @@
 *
 !functions/
 !deploy/entrypoint.sh
+!deploy/init.sh
 !deploy/load_functions.py
 **/__pycache__

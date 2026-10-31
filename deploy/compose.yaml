@@ -1,0 +1,41 @@
+# The OMV Compose stack "Chat": paste this file into the stack's file and .env.example into its environment (setup
+# steps: deploy/README.md). CHAT comes from OMV's global.env. No defaults: every variable must be set. The image is
+# built and pushed to GHCR by .github/workflows/image.yml on every push to main.
+
+services:
+  # Runs first on every Up: creates the CHAT folders and the secrets that are missing (placeholders, plus a random
+  # session key), and fixes modes (deploy/init.sh). Never overwrites. Root, because the folders are root's; no network.
+  init:
+    image: ghcr.io/selvalogesh/personal-llm-assistant:latest
+    user: "0:0"
+    network_mode: none
+    command: ["bash", "/app/chat-start/init.sh", "/chat-storage"]
+    volumes:
+      - ${CHAT:?set CHAT in OMV's global.env}:/chat-storage
+
+  # openai.selvalogesh.com → your proxy or tunnel → this port. Always on.
+  webui:
+    image: ghcr.io/selvalogesh/personal-llm-assistant:latest
+    depends_on:
+      init:
+        condition: service_completed_successfully
+      kokoro:
+        condition: service_started
+    environment:
+      WEBUI_URL: ${CHAT_WEBUI_URL:?set CHAT_WEBUI_URL in the stack environment}
+      WEBUI_ADMIN_EMAIL: ${CHAT_ADMIN_EMAIL:?set CHAT_ADMIN_EMAIL in the stack environment}
+      WHISPER_MODEL: ${CHAT_WHISPER_MODEL:?set CHAT_WHISPER_MODEL in the stack environment}
+    volumes:
+      # data/: users, chats, files, document vectors and the Whisper model cache
+      - ${CHAT}/data:/app/backend/data
+      # secrets/: read-only, so even the internet-facing app can't change the keys (deploy/README.md, step 3)
+      - ${CHAT}/secrets:/run/chat-secrets:ro
+    ports:
+      - "${CHAT_UI_PORT:?set CHAT_UI_PORT in the stack environment}:8080"
+    restart: unless-stopped
+
+  # Text-to-speech for read-aloud, call mode and voice notes. No ports: only webui reaches it, on the stack's
+  # network (R14).
+  kokoro:
+    image: ghcr.io/remsky/kokoro-fastapi-cpu:v0.9.2
+    restart: unless-stopped
