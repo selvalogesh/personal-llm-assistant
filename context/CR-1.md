@@ -20,7 +20,7 @@ server setup (§6, phase 7) is the owner's next step.**
 | R9 | Images: understand uploaded images (vision), generate images with image models, and draw images as SVG or Python code | Owner |
 | R10 | Documents: embeddings for document search go through OpenRouter, not the server | Owner |
 | R11 | Routing: a new Open WebUI pipe function. `openrouter-routing-stack` is not reused | Owner |
-| R12 | Deployment like finance-analysis CR-5 §7: public repo; GitHub Actions builds a public GHCR image (linux/amd64); OMV Compose stack; updates are a manual Pull, then Up | Owner |
+| R12 | Deployment like finance-analysis CR-5 §7: public repo; GitHub Actions builds a public GHCR image (linux/amd64); OMV Compose stack; updates are a manual Pull, then Up. **Superseded by [CR-2](CR-2.md):** the official Open WebUI image, our files fetched from git | Owner |
 | R13 | Secrets (the OpenRouter key and others) come from read-only files in `/StorageDrive/Chat/secrets`, never from the compose environment, the same way as finance. Ports are configurable. The owner handles the reverse proxy, TLS and DNS | Owner (first the compose env; changed to files, D5) |
 | R14 | Only Open WebUI's port is published; every other service stays internal to the stack | Owner |
 | R15 | Voice, English only: speech-to-text with **local Whisper**, text-to-speech with **local Kokoro**, both on the server | Owner |
@@ -132,6 +132,9 @@ finance already run there.
   inline (a data URL, about 1 MB a minute), so it plays without another request.
 
 ### 3.5 Image and startup
+
+**Superseded by [CR-2](CR-2.md) §3.2–3.3:** no image of our own; the settings moved to `deploy/settings.env`. The
+entrypoint below still applies, run from the fetched copy.
 - `deploy/Dockerfile`: `FROM` Open WebUI at a pinned version, plus the functions (pipe, tool, filter) and an
   entrypoint script.
 - **Entrypoint:**
@@ -148,6 +151,8 @@ finance already run there.
   environment values in the image or the stack.
 
 ### 3.6 Deployment (finance CR-5 §7 pattern)
+
+**Superseded by [CR-2](CR-2.md) §3.4–3.5:** CI tests and moves the branch `stable` instead of pushing an image.
 
 | Item | Detail |
 |---|---|

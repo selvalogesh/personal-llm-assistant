@@ -8,7 +8,8 @@ settings only; secrets are files. The runbook is [deploy/README.md](deploy/READM
 
 | Variable | Example | Purpose |
 |---|---|---|
-| `CHAT` | `/StorageDrive/Chat` (OMV's global env) | Host folder holding `data/` and `secrets/` |
+| `CHAT` | `/StorageDrive/Chat` (OMV's global env) | Host folder holding `app/`, `data/` and `secrets/` |
+| `CHAT_REF` | `stable` | What `init` fetches on every Up: `stable` (the newest commit whose tests passed), or a tag or full commit hash to roll back |
 | `CHAT_UI_PORT` | `127.0.0.1:8020` or `8020` | Host port the proxy or tunnel points at; with an address, it binds only there |
 | `CHAT_WEBUI_URL` | `https://openai.selvalogesh.com` | The public address |
 | `CHAT_ADMIN_EMAIL` | your email | The admin account created on the first start |
@@ -25,11 +26,13 @@ Each file is mode 600 and holds only its value. `init` creates the folder and pl
 | `webui-secret-key` | Random session key (`init` generates it) | Open WebUI; changing it signs everyone out |
 
 [deploy/entrypoint.sh](deploy/entrypoint.sh) reads them into the Open WebUI process only, so they never appear in
-the image, the stack environment or `docker inspect`.
+the stack environment, the repo or `docker inspect`.
 
-## Image defaults ([deploy/Dockerfile](deploy/Dockerfile))
+## Open WebUI settings ([deploy/settings.env](deploy/settings.env))
 
-Open WebUI saves most of these to its database on the first start; after that, change them in Admin → Settings.
+The entrypoint loads this file over the official image's defaults (CR-2). It never sets a variable the stack
+environment sets, and a test checks that. Open WebUI saves most of these to its database on the first start; after
+that, change them in Admin → Settings.
 
 | Setting | Value | Why |
 |---|---|---|
@@ -38,7 +41,7 @@ Open WebUI saves most of these to its database on the first start; after that, c
 | `ENABLE_SIGNUP`, `DEFAULT_USER_ROLE` | `true`, `pending` | New accounts wait for approval (R3) |
 | `ENABLE_WEB_SEARCH`, `ENABLE_IMAGE_GENERATION` | `false` | Both go through the Router's toggles instead |
 | `RAG_EMBEDDING_ENGINE`, `RAG_OPENAI_API_BASE_URL`, `RAG_EMBEDDING_MODEL` | `openai`, OpenRouter, `voyageai/voyage-4-lite` | Document search via OpenRouter (R10) |
-| `AUDIO_STT_ENGINE`, `WHISPER_MODEL` | local, `base.en` | Dictation and call mode (R15) |
+| `AUDIO_STT_ENGINE` | local (empty); the model is `CHAT_WHISPER_MODEL` | Dictation and call mode (R15) |
 | `AUDIO_TTS_ENGINE`, `AUDIO_TTS_OPENAI_API_BASE_URL`, `AUDIO_TTS_VOICE` | `openai`, `http://kokoro:8880/v1`, `af_heart` | Read aloud and call mode through Kokoro (R15) |
 | `ENABLE_CODE_INTERPRETER`, `CODE_INTERPRETER_ENGINE` | `true`, `pyodide` | Python charts and drawings run in the browser (R9) |
 
@@ -65,12 +68,18 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m pytest -q        # offline: OpenRouter and Kokoro are faked
 ```
 
-**Local stack check** before pushing a change to the image or the functions (needs Docker Desktop):
+**Local stack check** before pushing a change to the functions, the startup files or the Open WebUI version (needs
+Docker Desktop):
 
-1. Build: `docker build -f deploy/Dockerfile -t ghcr.io/selvalogesh/personal-llm-assistant:latest .`
-2. Make an env file outside the repo with `CHAT=<a throwaway folder>`, `CHAT_UI_PORT=127.0.0.1:3001`,
-   `CHAT_WEBUI_URL=http://localhost:3001`, `CHAT_ADMIN_EMAIL=admin@test.local`, `CHAT_WHISPER_MODEL=base.en`.
-3. `docker compose -p chattest --env-file <that file> -f deploy/compose.yaml up -d`, fill the two placeholder
-   secrets in the throwaway folder (use the laptop key for testing), and Up again.
+1. Make an env file outside the repo with `CHAT=<a throwaway folder>`, `CHAT_UI_PORT=127.0.0.1:3001`,
+   `CHAT_WEBUI_URL=http://localhost:3001`, `CHAT_ADMIN_EMAIL=admin@test.local`, `CHAT_WHISPER_MODEL=base.en`,
+   `CHAT_REF=stable`.
+2. `docker compose -p chattest --env-file <that file> -f deploy/compose.yaml -f deploy/compose.local.yaml up -d`.
+   With [compose.local.yaml](deploy/compose.local.yaml), `init` copies your working tree instead of fetching, so
+   uncommitted changes are tested.
+3. Fill the two placeholder secrets in the throwaway folder (use the laptop key for testing), then `down` and `up`
+   again with the same files.
 4. Open http://localhost:3001, then `docker compose -p chattest ... down` and delete the throwaway folder, which
    holds the key.
+
+To test the real fetch, push the branch, leave out `compose.local.yaml`, and set `CHAT_REF` to the branch name.

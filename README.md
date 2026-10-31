@@ -16,7 +16,7 @@ every model request going to OpenRouter through our own routing pipe, and voice 
 | Where | What |
 |---|---|
 | [functions/](functions/) | The Router pipe and the three toggles (single-file Open WebUI functions) |
-| [deploy/](deploy/) | Dockerfile, startup scripts, the OMV compose stack and the [server runbook](deploy/README.md) |
+| [deploy/](deploy/) | Startup scripts, Open WebUI settings, the OMV compose stack and the [server runbook](deploy/README.md) |
 | [tests/](tests/) | Offline tests (`python -m pytest`) |
 | [context/](context/README.md) | Requirements, design decisions and the plan for each change request |
 | [ENVIRONMENT.md](ENVIRONMENT.md) | Settings, secrets and local development |

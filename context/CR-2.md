@@ -2,8 +2,8 @@
 
 The server runs Open WebUI's official image, unmodified, pulled from Open WebUI's own registry. Our files (the
 functions, the startup scripts and the settings) come from this repo, fetched on every Up, instead of being baked
-into a GHCR image of our own. This replaces CR-1's deployment: R12, §3.5 and §3.6. **State: planned, not
-started.**
+into a GHCR image of our own. This replaces CR-1's deployment: R12, §3.5 and §3.6. **State: built and verified on
+the laptop; the cutover on the server (§6, phase 7) is the owner's next step.**
 
 ## 1. Requirements
 
@@ -63,17 +63,21 @@ The first idea was a compose `build:` step from the git repo. These are its prob
 
   ```bash
   set -euo pipefail
+  repo=https://github.com/selvalogesh/personal-llm-assistant.git
   mkdir -p /tmp/src && cd /tmp/src && git init -q
-  if git fetch -q --depth 1 https://github.com/selvalogesh/personal-llm-assistant.git "$$CHAT_REF"; then
+  if git fetch -q --depth 1 "$$repo" "$$CHAT_REF"; then
     rm -rf /chat-storage/app.next && mkdir -p /chat-storage/app.next
     git archive FETCH_HEAD functions deploy | tar -x -C /chat-storage/app.next
     echo "$$(git rev-parse FETCH_HEAD) $$CHAT_REF $$(date -u +%FT%TZ)" > /chat-storage/app.next/DEPLOYED
     rm -rf /chat-storage/app && mv /chat-storage/app.next /chat-storage/app
     echo "init: fetched $$(cat /chat-storage/app/DEPLOYED)"
+  elif git ls-remote "$$repo" HEAD > /dev/null 2>&1; then
+    echo "init: GitHub has no $$CHAT_REF: set CHAT_REF to stable, a tag or a full commit hash, then Up again" >&2
+    exit 1
   elif [[ -f /chat-storage/app/deploy/init.sh ]]; then
-    echo "init: couldn't fetch $$CHAT_REF; keeping $$(cat /chat-storage/app/DEPLOYED)" >&2
+    echo "init: couldn't reach GitHub; keeping $$(cat /chat-storage/app/DEPLOYED)" >&2
   else
-    echo "init: couldn't fetch $$CHAT_REF and there's no earlier copy; check the network, then Up again" >&2
+    echo "init: couldn't reach GitHub and there's no earlier copy; check the network, then Up again" >&2
     exit 1
   fi
   exec bash /chat-storage/app/deploy/init.sh /chat-storage
@@ -83,8 +87,10 @@ The first idea was a compose `build:` step from the git repo. These are its prob
     `functions/` and `deploy/` only. No sparse checkout: this is simpler, and only the needed folders land.
   - **Swap:** the new copy is built in `app.next` and renamed over `app` only once it's complete, so a failed
     fetch never leaves `app/` half-written.
-  - **Fallback (D5):** if the fetch fails and `app/` holds a copy, it warns and keeps it. With no copy, it exits 1,
-    because `webui` can't start without one.
+  - **Bad ref (D14):** if the fetch fails but GitHub answers, `CHAT_REF` is wrong (a typo or a short hash), and it
+    stops with an error instead of quietly keeping the old copy.
+  - **Fallback (D5):** if GitHub can't be reached and `app/` holds a copy, it warns and keeps it. With no copy, it
+    exits 1, because `webui` can't start without one.
   - **Then** it runs the fetched `deploy/init.sh`, unchanged from CR-1.
 - **`webui`**: `ghcr.io/open-webui/open-webui:v0.12.5`, with `command: ["bash", "/app/chat/deploy/entrypoint.sh"]`
   and the extra mount `${CHAT}/app:/app/chat:ro`. Its environment and the other mounts are as in CR-1.
@@ -96,11 +102,14 @@ The first idea was a compose `build:` step from the git repo. These are its prob
 
 ### 3.3 Startup (`deploy/entrypoint.sh`)
 
-- **Settings:** the `ENV` block from `deploy/Dockerfile` moves verbatim to `deploy/settings.env`, without
-  `WHISPER_MODEL`. The entrypoint loads it first, so it overrides the official image's defaults. **Rule:**
-  `settings.env` never sets a variable that the compose environment sets, and a test checks this (D6).
-- **Version guard:** the entrypoint reads the running version from `/app/package.json` (`"version": "0.12.5"`,
-  checked) and the `open-webui` tag from `/app/chat/deploy/compose.yaml`. If they differ, it stops with "The stack
+- **Settings:** the Open WebUI settings from `deploy/Dockerfile`'s `ENV` block move verbatim to
+  `deploy/settings.env`, without `WHISPER_MODEL`. The two paths of our own (`CHAT_SECRETS_DIR`,
+  `LOADER_FUNCTIONS_DIR`) became defaults in the scripts. The entrypoint loads the file first, so it overrides the
+  official image's defaults. **Rule:** `settings.env` never sets a variable that the compose environment sets, and
+  a test checks this (D6).
+- **Version guard** (`deploy/check_version.py`, run by the entrypoint): it reads the running version from
+  `/app/package.json` (`"version": "0.12.5"`, checked) and the `open-webui` tag from
+  `/app/chat/deploy/compose.yaml`. If they differ, it stops with "The stack
   runs Open WebUI X, but the repo at <commit> expects Y: paste deploy/compose.yaml into the stack, then Pull, Down,
   Up" (D7).
 - **Log line at start**, from `DEPLOYED`: `running <commit> (<ref>), Open WebUI <version>`.
@@ -149,15 +158,15 @@ Only the changes from CR-1 §4:
 | Dependabot | n/a | Pull requests for new Open WebUI and Kokoro versions | GitHub | Free |
 | ~~GHCR~~ | | No longer used | | |
 
-## 5. Open items (verified in phase 1)
+## 5. Spike findings (2026-10-31, laptop, Open WebUI v0.12.5, Docker Compose v5.6.1)
 
-| # | Question |
-|---|---|
-| O1 | The §3.2 script works in the official image: a shallow fetch of a branch, a tag and a full commit hash without credentials, then `git archive` piped to `tar` |
-| O2 | OMV's Up re-runs the completed one-shot `init` and leaves a running, unchanged `webui` alone. That's why the routine is Down, then Up (D8) |
-| O3 | `/app/package.json` carries the version in newer Open WebUI releases too; otherwise the guard needs another source |
-| O4 | Dependabot's `docker-compose` ecosystem reads `ghcr.io/open-webui/open-webui:v0.12.5` and updates both tags in one pull request |
-| O5 | With GitHub unreachable (`init` given a bad repo address), the previous `app/` is kept and `webui` starts |
+| # | Question | Finding |
+|---|---|---|
+| O1 | The §3.2 script in the official image: a shallow fetch of a branch, a tag and a full commit hash without credentials, then `git archive` piped to `tar` | **Works** for all three (the tag tested on another public repo; this one has none). Only `functions/`, `deploy/` and `DEPLOYED` land. **A short hash fails**, and the first script then quietly kept the old copy, so the script now tells a wrong ref from an outage (D14) |
+| O2 | Up re-runs the completed one-shot `init` and leaves a running, unchanged `webui` alone | **Yes**, with `docker compose`: the second Up re-ran `init`, and `webui` kept its container and start time. Hence Down, then Up (D8). OMV's Up button is checked at the cutover |
+| O3 | `/app/package.json` carries the version in newer releases | **Yes** in v0.12.3–v0.12.5; v0.12.5 is the newest release |
+| O4 | Dependabot's `docker-compose` ecosystem updates both tags in one pull request | GitHub's docs list `docker-compose` for version updates, but don't say which file names it reads or how it treats a tag written twice. **Checked once `dependabot.yml` is on `main`** |
+| O5 | With GitHub unreachable, the previous `app/` is kept | **Yes:** with no network, `init` warns and keeps the copy (exit 0); with no copy, it stops (exit 1) |
 
 ## 6. Build order
 
@@ -167,15 +176,25 @@ into `main` once phase 6 passes.
 | # | Phase | Output | State |
 |---|---|---|---|
 | 0 | **Plan** | This file and the [index](README.md) entry | Done |
-| 1 | **Spike: O1–O5** on the laptop | Findings in §5; the design adjusted where needed | Not started |
-| 2 | **Startup from files** | `deploy/settings.env`; `entrypoint.sh` loads it, guards the version, logs the commit, uses `/app/chat` paths. Tests: no overlap between `settings.env` and the compose environment, the version guard, the two Open WebUI tags exact and equal (`pyyaml` added to `requirements-dev.txt`) | Not started |
-| 3 | **Compose** | `init` with the §3.2 script; `webui` on the official image; `compose.local.yaml`; `CHAT_REF` in `.env.example` | Not started |
-| 4 | **CI** | `ci.yml` (pytest; on `main`, move `stable`); `dependabot.yml`; delete `deploy/Dockerfile`, `.dockerignore`, `image.yml` | Not started |
-| 5 | **Docs** | `deploy/README.md` (diagram, routines, rollback, troubleshooting for the fetch and the guard; `init` now has the network), `ENVIRONMENT.md` (`settings.env`, `CHAT_REF`, local check), `CLAUDE.md` and `README.md` (no GHCR image), and a "superseded by CR-2" note on CR-1's R12, §3.5 and §3.6 | Not started |
-| 6 | **Local stack check** | CR-1's local check through `compose.local.yaml`, plus a real fetch of `stable` from GitHub | Not started |
+| 1 | **Spike: O1–O5** on the laptop | Findings in §5; the design adjusted where needed | Done (§5; D14 added) |
+| 2 | **Startup from files** | `deploy/settings.env`; `entrypoint.sh` loads it, guards the version (`deploy/check_version.py`), logs the commit, uses `/app/chat` paths. `*.env` kept LF in `.gitattributes` | Done |
+| 3 | **Compose** | `init` with the §3.2 script; `webui` on the official image; `compose.local.yaml`; `CHAT_REF` in `.env.example`. Tests in `tests/test_deploy.py`: no overlap between `settings.env` and the compose environment, the version guard, the two Open WebUI tags exact and equal, every `$` escaped (`pyyaml` added to `requirements-dev.txt`) | Done |
+| 4 | **CI** | `ci.yml` (pytest; on `main`, move `stable`); `dependabot.yml`; delete `deploy/Dockerfile`, `.dockerignore`, `image.yml` | Done |
+| 5 | **Docs** | `deploy/README.md` (diagram, routines, rollback, troubleshooting for the fetch and the guard), `ENVIRONMENT.md` (`settings.env`, `CHAT_REF`, local check), `CLAUDE.md` (a guardrail for the official image) and `README.md`, and "superseded by CR-2" notes on CR-1's R12, §3.5 and §3.6 | Done |
+| 6 | **Local stack check** | CR-1's local check through `compose.local.yaml`, plus a real fetch from GitHub (of this branch, since `stable` appears only after the merge) | Done (§7) |
 | 7 | **Cutover (owner)** | Paste `compose.yaml` and the environment (with `CHAT_REF=stable`) into the stack, then Pull, Down, Up, and the runbook's "Done when". `data/` and `secrets/` carry over. Then, optionally, delete the GHCR package | Not started |
 
 ## 7. Verification
+
+**Results on the laptop (2026-10-31):** 52 offline tests pass. Through `compose.local.yaml`: `init` copied the
+working tree and created the placeholders, and `webui` refused them; after the secrets were filled in (laptop key),
+`webui` ran `ghcr.io/open-webui/open-webui:v0.12.5`, logged `running working-tree (local), Open WebUI 0.12.5`, and
+installed the four functions; only Auto, Creative, Smart and Free were listed; a chat on Auto answered; a sign-up
+landed as pending; `docker inspect` showed no secret. With `app/deploy/compose.yaml` changed to v0.12.6, `webui`
+refused to start with the §3.3 message. Without the override, `init` fetched this branch from GitHub, and
+`DEPLOYED` and `webui`'s log named the same commit as the local HEAD; the functions reported unchanged. A short
+hash stopped `init` with "GitHub has no …". **Left for the cutover:** OMV's Up button (O2), Dependabot (O4), CI
+moving `stable`, and the runbook's "Done when".
 
 | Check | How |
 |---|---|
@@ -196,7 +215,7 @@ into `main` once phase 6 passes.
 | D2 | The server follows branch `stable`, which CI moves only after the tests pass | This restores the test gate the image push gave. `main` itself can be failing, because merges are pushed before CI runs |
 | D3 | `init` uses the official Open WebUI image | It has git, and it adds no third image to trust or update |
 | D4 | Fetching and preparing the folders are one service, `init`, which has the network | Owner's choice. A separate fetch service without access to `secrets/` protected little: `webui` runs the fetched code with the secrets readable and with the network anyway. One service is simpler, and the tag is written twice, not three times. The trade-off: the one container that can write `secrets/` now has the network, where CR-1's `init` had none |
-| D5 | A failed fetch keeps the previous copy | A GitHub outage shouldn't take chat down; only the very first Up needs GitHub to answer |
+| D5 | When GitHub can't be reached, `init` keeps the previous copy | A GitHub outage shouldn't take chat down; only the very first Up needs GitHub to answer |
 | D6 | Settings live in `deploy/settings.env`, loaded by the entrypoint, and never set a variable the compose environment sets | Settings stay in git and pass CI, and changing one needs no compose paste. An overlap would let the file silently override the stack |
 | D7 | The entrypoint refuses to start when the running Open WebUI version differs from the repo's `compose.yaml` | It keeps the Open WebUI version and our functions moving together, and catches a forgotten paste. The owner is there at every Up that can cause it; a reboot fetches nothing |
 | D8 | The update routine is Down, then Up | Up leaves a running, unchanged `webui` alone, so the new functions wouldn't load |
@@ -205,3 +224,4 @@ into `main` once phase 6 passes.
 | D11 | Rejected: a small GHCR image carrying only our files, beside the official image | It keeps an image of our own, which R2 rules out. It would have kept the plain Pull, Up routine and image tags for rollback |
 | D12 | The fetch is a shallow fetch of one commit plus `git archive` of the two folders, not a sparse checkout | Simpler, and only the needed folders land on the server. The download is the whole commit, about 100 KB |
 | D13 | The Open WebUI tag is written literally in each service, and a test checks they match | Dependabot can update literal tags; it may not follow a YAML anchor |
+| D14 | When the fetch fails but GitHub answers (`git ls-remote`), `init` stops instead of keeping the old copy | Found in the spike: a short hash or a typo in `CHAT_REF` otherwise looked like an outage, so a rollback would quietly do nothing. Only a real outage keeps the old copy (D5) |

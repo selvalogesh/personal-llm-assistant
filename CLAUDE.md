@@ -1,10 +1,10 @@
 # personal-llm-assistant
 
 A private chat service for the owner, family and friends: Open WebUI on the owner's OMV home server, with model
-traffic going to OpenRouter through our own routing pipe, local voice (Whisper, Kokoro), and a GHCR image built by
-GitHub Actions. The owner made every design decision deliberately; [context/CR-1.md](context/CR-1.md) records them
-with reasons, and [context/Discovery.md](context/Discovery.md) the ideation before it. Settings and secrets:
-[ENVIRONMENT.md](ENVIRONMENT.md).
+traffic going to OpenRouter through our own routing pipe, local voice (Whisper, Kokoro), and Open WebUI's official
+image starting from our files, fetched from this repo. The owner made every design decision deliberately; the
+plans in [context/](context/README.md) record them with reasons, and [context/Discovery.md](context/Discovery.md)
+the ideation before CR-1. Settings and secrets: [ENVIRONMENT.md](ENVIRONMENT.md).
 
 ## Guardrails
 
@@ -13,6 +13,8 @@ These are the owner's decisions. Change one only when the owner asks.
 - **Secrets live only in files** in `/StorageDrive/Chat/secrets/` on the server (each holding only its value,
   mounted read-only). Never in the stack environment (OMV commits it to git), the image, git, logs or chats.
 - **Only Open WebUI's port is published.** Kokoro and anything else stay internal to the stack.
+- **The server runs Open WebUI's official image, unmodified, and no image of our own** (CR-2). Our code reaches the
+  server only through the branch `stable`, which CI moves after the tests pass.
 - **Users see only the pipe's options** (Auto, Creative, Smart, Free). The direct OpenRouter model list stays off,
   so spending stays predictable inside the shared $10/month workspace budget.
 - **No refusal detector and no rerouting on refusal** (CR-1 decision D3). Model order is the lever.
@@ -22,8 +24,9 @@ These are the owner's decisions. Change one only when the owner asks.
 
 ## Setting up the server
 
-[deploy/README.md](deploy/README.md) is the runbook. The repo isn't cloned on the server: it runs the GHCR image
-(pushed by `.github/workflows/image.yml` on every push to `main`) from the OMV Compose stack "Chat". Steps marked
+[deploy/README.md](deploy/README.md) is the runbook. The repo isn't cloned on the server: the OMV Compose stack
+"Chat" runs Open WebUI's official image, and its `init` service fetches `functions/` and `deploy/` at `stable` on
+every Up (moved by `.github/workflows/ci.yml` once the tests pass on `main`). Steps marked
 **(you)** need the owner: prepare everything around them, hand the owner the exact action, then verify it with the
 check the runbook gives.
 
