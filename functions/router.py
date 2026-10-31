@@ -35,6 +35,9 @@ FRIENDLY = {
     "network": "The server couldn't reach OpenRouter. Try again in a minute.",
     "key_missing": "The server has no OpenRouter key yet. Ask the admin to fill in `secrets/openrouter-api-key`.",
     "other": "None of the models could answer this time. Try again, or pick another option.",
+    # Notes under a reply the length limit cut off (finish_reason "length")
+    "cut_thinking": "The model used its whole reply limit thinking and never wrote the answer. Ask again, or split the request into smaller steps.",
+    "cut": "The reply hit the length limit and stops here. Say \"continue\" to get the rest.",
 }
 
 
@@ -114,7 +117,10 @@ class Pipe:
             default="qwen/qwen3.7-flash",
             description="Titles, tags and follow-up suggestions",
         )
-        MAX_TOKENS: int = 4096
+        MAX_TOKENS: int = Field(
+            default=16384,
+            description="Reply cap, thinking included: thinking models can spend thousands of tokens before answering",
+        )
         WEB_ENGINE: str = Field(default="parallel", description="OpenRouter web plugin engine")
         WEB_MAX_RESULTS: int = 3
         SHOW_FOOTER: bool = True
@@ -186,6 +192,9 @@ class Pipe:
                                 yield piece
                             elif info is not None:
                                 await self._footer(emitter, info, label, data_collection, web)
+                                if info["finish_reason"] == "length":
+                                    # Never end silently on a cut reply, least of all one that is only thinking.
+                                    yield f"\n\n_{FRIENDLY['cut' if info['answered'] else 'cut_thinking']}_"
                         return
                     except RouteError as e:
                         last_error = e
@@ -227,8 +236,9 @@ class Pipe:
         return payload
 
     async def _stream(self, payload: dict, key: str):
-        """Yields (text, None) for each piece of the reply, then (None, info) with model, tokens and cost."""
-        info = {"model": "", "tokens": 0, "cost": 0.0}
+        """Yields (text, None) for each piece of the reply, then (None, info) with model, tokens and cost, why the
+        reply ended, and whether any answer (not just thinking) came."""
+        info = {"model": "", "tokens": 0, "cost": 0.0, "finish_reason": None, "answered": False}
         in_reasoning = False
         try:
             async with self._client() as client:
@@ -268,7 +278,9 @@ class Pipe:
                                 if in_reasoning:
                                     in_reasoning = False
                                     yield "\n</think>\n\n", None
+                                info["answered"] = True
                                 yield content, None
+                            info["finish_reason"] = choice.get("finish_reason") or info["finish_reason"]
         except httpx.HTTPError as e:
             raise RouteError("network", str(e)) from e
         if in_reasoning:

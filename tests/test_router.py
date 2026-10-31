@@ -41,6 +41,23 @@ def test_reasoning_is_wrapped_in_think_tags(key_file):
     assert chat(make_pipe(fake, key_file)) == "<think>\nLet me see.\n</think>\n\nAnswer"
 
 
+def test_reply_cut_while_thinking_says_there_is_no_answer(key_file):
+    # The length limit ran out mid-thought (seen on the server with DeepSeek V4.1 Flash and a 4,096 cap)
+    fake = FakeOpenRouter([(200, sse(delta(reasoning="Hmm, first"), delta(reasoning=" the arms", finish="length"), usage()))])
+    reply = chat(make_pipe(fake, key_file))
+    assert reply == f"<think>\nHmm, first the arms\n</think>\n\n\n\n_{router.FRIENDLY['cut_thinking']}_"
+
+
+def test_reply_cut_after_answering_says_it_stops_there(key_file):
+    fake = FakeOpenRouter([(200, sse(delta(reasoning="Plan."), delta("Part one", finish="length"), usage()))])
+    assert chat(make_pipe(fake, key_file)).endswith(f"Part one\n\n_{router.FRIENDLY['cut']}_")
+
+
+def test_finished_reply_gets_no_note(key_file):
+    fake = FakeOpenRouter([(200, sse(delta("Done", finish="stop"), usage()))])
+    assert chat(make_pipe(fake, key_file)) == "Done"
+
+
 def test_first_request_denies_logging_and_carries_user_and_cap(key_file):
     fake = FakeOpenRouter([OK])
     chat(make_pipe(fake, key_file, MAX_TOKENS=1000), max_tokens=5000, temperature=0.3)

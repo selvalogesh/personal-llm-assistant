@@ -96,7 +96,9 @@ finance already run there.
 - **Footer per reply:** the model that answered, plus tokens and cost.
 - **Per-user usage:** each request carries the Open WebUI user id in OpenRouter's `user` field, so usage can be
   split by person on OpenRouter.
-- **`max_tokens` cap** in the Valves, which avoids "can only afford N tokens" failures.
+- **`max_tokens` cap** in the Valves (16,384), which bounds what one reply can cost. Thinking counts against it,
+  so it leaves room for thinking models to finish (D13). A reply cut at the cap gets a note under it, and one cut
+  while still thinking says that no answer was written.
 - Open WebUI's direct OpenRouter model list (300+ models) is hidden from users, so only the pipe's options appear
   and the budget stays predictable.
 
@@ -252,4 +254,5 @@ phone check in the runbook's "Done when".
 | D10 | `BYPASS_MODEL_ACCESS_CONTROL=true` | Pipe models are admin-only otherwise; all users have the same access (R2) |
 | D11 | `init` generates `webui-secret-key` itself; the other secrets start as placeholders `webui` refuses | A session key nobody needs to know; the rest must be the owner's |
 | D12 | Voice notes are inline mp3 data URLs (about 1 MB a minute), capped at 1,200 characters | Plays inside the embed without a signed-in request; the cap bounds chat size and Kokoro time on the N100 |
+| D13 | `MAX_TOKENS` 16,384 (was 4,096), and a note under any reply cut at the cap. `reasoning.effort` is not sent | On the server, DeepSeek V4.1 Flash spent the whole 4,096 thinking about an SVG and wrote no answer, and the chat showed only the thinking. A full 16k reply on it costs about $0.008. `effort` would also switch thinking on for models that don't think by default |
 | D13 | The repo and the GHCR package are public (they started private) | Owner's choice: no secrets in either (D5), public packages are free to store, and the server pulls without a token. A package can't be made private again |

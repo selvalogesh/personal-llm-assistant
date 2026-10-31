@@ -50,7 +50,7 @@ Open WebUI saves most of these to its database on the first start; after that, c
 | `VISION_MODELS` | DeepSeek V4.1 Flash, Qwen 3.7 Flash, Gemma 4 free | For images when the chosen chain has no vision model |
 | `IMAGE_MODELS` | Recraft 4.1 Flash, Seedream 5 Flash, Qwen Image 2.1 Turbo | "Create image", cheapest first |
 | `TASK_MODEL` | `qwen/qwen3.7-flash` | Titles, tags and follow-up suggestions |
-| `MAX_TOKENS` | `4096` | Reply cap; avoids "can only afford N tokens" when credits are low |
+| `MAX_TOKENS` | `16384` | Reply cap, thinking included (D13). Lower it if low credits bring "can only afford N tokens" |
 | `WEB_ENGINE`, `WEB_MAX_RESULTS` | `parallel`, `3` | OpenRouter web plugin settings |
 | `SHOW_FOOTER` | `true` | The status line with model, tokens and cost |
 | `API_KEY_FILE` | `/run/chat-secrets/openrouter-api-key` | Where the key is read from |

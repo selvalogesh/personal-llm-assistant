@@ -39,13 +39,13 @@ def sse(*chunks: dict, done: bool = True) -> bytes:
     return "\n".join(lines).encode()
 
 
-def delta(content=None, reasoning=None, model="vendor/model") -> dict:
+def delta(content=None, reasoning=None, model="vendor/model", finish=None) -> dict:
     d = {}
     if content is not None:
         d["content"] = content
     if reasoning is not None:
         d["reasoning"] = reasoning
-    return {"model": model, "choices": [{"delta": d}]}
+    return {"model": model, "choices": [{"delta": d, "finish_reason": finish}]}
 
 
 def usage(model="vendor/model", tokens=42, cost=0.0012) -> dict:
