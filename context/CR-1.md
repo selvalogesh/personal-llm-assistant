@@ -50,8 +50,8 @@ finance already run there.
  │ webui: ghcr.io/selvalogesh/personal-llm-assistant (Open WebUI, pinned)     │
  │  ├─ accounts (pending approval), chats, files      → ${CHAT}/data          │
  │  ├─ pipe "Router": chains → OpenRouter chat API    ─────────────┐          │
- │  ├─ tool "Generate image" → OpenRouter image models ────────────┤          │
- │  ├─ filter "Voice note": reply → Kokoro → audio clip            │          │
+ │  ├─ toggles: Web search, Create image (→ Router), Voice reply   │          │
+ │  ├─ Voice reply: reply → Kokoro → voice-note player             │          │
  │  ├─ Whisper (built in, local) for dictation and call mode       │          │
  │  ├─ document search: embeddings via OpenRouter ─────────────────┤          │
  │  └─ code runner (in the browser) and SVG rendering for drawn images        │
@@ -64,24 +64,33 @@ finance already run there.
 ```
 
 ### 3.1 Routing pipe ("Router")
-- A manifold pipe. It shows a few options in the model picker. Each is a **chain** of OpenRouter models defined in
-  the pipe's Valves (JSON), editable in Admin → Functions with no rebuild:
+- A manifold pipe, [functions/router.py](../functions/router.py). It shows four options in the model picker. Each
+  is a **chain** of OpenRouter models in the pipe's Valves (comma-separated), editable in Admin → Functions with no
+  rebuild. Defaults, checked against OpenRouter's live list on 2026-10-31:
 
-| Option | Chain (example; slugs are checked against OpenRouter's model list before release) | For |
+| Option | Chain | For |
 |---|---|---|
-| **Auto** (default) | DeepSeek V4.1 Flash → GLM-5.3 → a third lab → a `:free` model | Everyday chat, coding, writing |
-| **Creative** | Permissive open models suited to fiction and roleplay | Long fiction and roleplay |
-| **Smart** | Stronger frontier models (stricter, cost more) | When quality matters more than cost; picked on purpose |
-| **Free** | `:free` models only | Also the automatic fallback when credits run out |
+| **Auto** (default) | `deepseek/deepseek-v4.1-flash`, `z-ai/glm-5.3`, `qwen/qwen3.7-flash`, `mistralai/mistral-small-2603` | Everyday chat, coding, writing |
+| **Creative** | `thedrummer/cydonia-24b-v4.1`, `sao10k/l3.1-euryale-70b`, `deepseek/deepseek-v4.1-flash` | Long fiction and roleplay |
+| **Smart** | `anthropic/claude-sonnet-5.5`, `openai/gpt-5.6-terra`, `google/gemini-3.5-flash` | When quality matters more than cost; picked on purpose |
+| **Free** | `google/gemma-4-31b-it:free`, `nvidia/nemotron-3.5-super-vl:free`, `nvidia/nemotron-3-ultra-550b-a55b:free` | Also the last resort for every other option |
 
-- **One request per turn:** `models: [chain]` with `provider.allow_fallbacks`. OpenRouter fails over on outages,
-  rate limits, context-length errors and moderation flags. Replies stream token by token.
-- **Privacy order (R6):** the first request sets `provider.data_collection: "deny"`. If no provider can serve the
-  chain under that rule, the pipe repeats the request with `"allow"`, and the reply's footer says so.
+- **Requests in groups of three:** OpenRouter's `models` takes at most 3 entries (found in the spike), so a chain
+  goes in groups of up to 3, each with `provider.allow_fallbacks`. Within a group OpenRouter fails over on
+  outages, rate limits, context-length errors and moderation flags. Replies stream token by token, and reasoning
+  shows as Open WebUI's collapsible "thinking" block.
+- **Privacy order (R6):** each group is asked first with `provider.data_collection: "deny"`. If that fails for any
+  reason except the key, credits or budget, the same group is asked again with `"allow"` (R5 wins), then the next
+  group. After the chain, the Free chain gets the same treatment. The footer says when a logging provider or the
+  free fallback answered.
 - **Vision (R9):** if a message carries images, the pipe uses the chain's vision-capable models.
-- **Web search (R8):** when the user turns on web search, the pipe adds OpenRouter's web plugin with a cheap engine
-  (`parallel`, $0.001–0.005 per search, against $0.007 for the default Exa).
-- **Out of credits:** a 402 switches the turn to the Free chain.
+- **Web search (R8):** a toggle in the chat input, the filter [web_search.py](../functions/web_search.py), marks
+  the turn, and the pipe adds OpenRouter's web plugin with a cheap engine (`parallel`, $0.001–0.005 per search,
+  against $0.007 for the default Exa). Open WebUI's own web search stays off: it would need a search engine of
+  its own.
+- **Titles, tags and follow-ups:** Open WebUI's background tasks go to one cheap model (`TASK_MODEL`,
+  `qwen/qwen3.7-flash`), never to the chosen chain.
+- **Out of credits or budget:** the rest of the paid chain is skipped and the Free chain answers.
 - **Never a raw error:** if everything fails, the chat shows a short message with the error type and what to do.
   Details go to the container log.
 - **Footer per reply:** the model that answered, plus tokens and cost.
@@ -93,33 +102,43 @@ finance already run there.
 
 ### 3.2 Images (R9)
 - **Understanding:** vision chains in the pipe (§3.1).
-- **Generating:** a Tool, "Generate image", that calls OpenRouter's image models, cheapest first, and attaches the
-  result to the chat. Images are billed per image.
+- **Generating:** a "Create image" toggle in the chat input, the filter [image_mode.py](../functions/image_mode.py).
+  With it on, the pipe sends the message to OpenRouter's image API (`/images`) with `IMAGE_MODELS`, cheapest
+  first: `recraft/recraft-v4.1-flash` ($0.007), `bytedance-seed/seedream-5-0-flash` ($0.018),
+  `qwen/qwen-image-2.1-turbo` ($0.018). The image is stored as an Open WebUI file and shown in the reply. This
+  replaced the planned Tool: a toggle is deterministic, while a Tool depends on a model deciding to call it.
 - **Drawn as code:** built into Open WebUI. SVG and HTML in a reply render in the chat, and Python (for example,
   matplotlib) runs in the browser's code runner. No extra cost beyond the chat tokens.
 
 ### 3.3 Documents (R10)
-- Open WebUI's built-in document search, with embeddings from OpenRouter (an OpenAI-compatible embeddings
-  endpoint). Vectors are stored in the bundled ChromaDB on the server.
+- Open WebUI's built-in document search, with embeddings from OpenRouter's OpenAI-compatible `/embeddings`
+  (`voyageai/voyage-4-lite`, $0.02 per 1M tokens, 1024 dimensions; tested). Vectors are stored in the bundled
+  ChromaDB on the server. Open WebUI sends only `model` and `input`, so embeddings use OpenRouter's default
+  provider routing (O3).
 
 ### 3.4 Voice (R15, R16)
 - **Dictation and call mode:** Open WebUI's built-in Whisper (`base.en`, upgradeable to `small.en`), running in the
   webui container. The model is cached in the data folder.
 - **Speech output:** Kokoro-FastAPI (CPU image) in the stack, internal only. Open WebUI's text-to-speech uses it
   as an OpenAI-compatible endpoint (`http://kokoro:8880/v1`).
-- **Voice-note replies:** a Filter function, "Voice note", that each user can switch on. After a reply finishes,
-  it sends the text to Kokoro and attaches the audio file to the message as a playable clip.
+- **Voice-note replies:** a "Voice reply" toggle, the filter [voice_note.py](../functions/voice_note.py). After a
+  reply finishes, it strips reasoning, code and markdown, sends up to 1,200 characters (about 75 s) to Kokoro
+  (`af_heart`, mp3), and attaches a WhatsApp-style player to the message as an Open WebUI embed. The audio is
+  inline (a data URL, about 1 MB a minute), so it plays without another request.
 
 ### 3.5 Image and startup
 - `deploy/Dockerfile`: `FROM` Open WebUI at a pinned version, plus the functions (pipe, tool, filter) and an
   entrypoint script.
 - **Entrypoint:**
-  - reads the secrets (OpenRouter key, Open WebUI secret key, admin API key) from the files in the read-only
-    `secrets/` mount, via `*_FILE` paths set in `compose.yaml`. It exports them only to the Open WebUI process,
-    and stops with a clear error if a file is missing or still a placeholder;
-  - starts Open WebUI;
-  - after `/health` passes, **upserts** the functions through Open WebUI's API. Only the code is updated, so
-    Valves changed in the UI are kept.
+  - reads the secrets (OpenRouter key, Open WebUI secret key, admin password) from the files in the read-only
+    `secrets/` mount. It exports them only to the Open WebUI process, and stops with a clear error if a file is
+    missing or still a placeholder. The Router reads the key file itself on every request;
+  - starts Open WebUI. On the very first start Open WebUI creates the admin account from `WEBUI_ADMIN_EMAIL` and
+    the password file, so nobody can claim admin by signing up first;
+  - runs [deploy/load_functions.py](../deploy/load_functions.py) in the background: after `/health` passes it
+    signs in as that admin and **upserts** the functions through Open WebUI's API, turns them on and makes the
+    filters global. Only the code is updated, so Valves changed in the UI are kept. On the first start only, it
+    turns sign-ups back on as pending (Open WebUI turns them off when it creates the admin).
 - Settings like the OpenRouter base URL, the Kokoro URL, the Whisper model and pending sign-ups are default
   environment values in the image or the stack.
 
@@ -130,16 +149,16 @@ finance already run there.
 | `.github/workflows/image.yml` | On push to `main` and on manual dispatch, one run at a time: pytest, then build `deploy/Dockerfile` for `linux/amd64`, then push `:latest` and `:sha-<short>` to GHCR (private). No GHA cache (finance lesson) |
 | `deploy/compose.yaml` | OMV stack **"Chat"**: `webui` (published on `${CHAT_UI_PORT}`) and `kokoro` (internal only). `${CHAT}` = `/StorageDrive/Chat` in OMV's global env holds `data/` and `secrets/` (read-only). No defaults: every variable is required |
 | `deploy/.env.example` | Settings only (port, `WEBUI_URL`, model sizes). Never passwords |
-| `deploy/README.md` | Runbook: GHCR login check (already set up for finance); folders and secrets; first Up; create the admin account, then the admin API key; settings; owner's proxy step; "Done when"; updating |
-| Secrets (`/StorageDrive/Chat/secrets`, folder 700, files 600, mounted read-only) | `openrouter-api-key` (the `chat-server` key), `webui-secret-key`, `webui-admin-api-key`. The stack environment carries settings only |
-| Tests | Offline pytest of the pipe, tool and filter with a fake HTTP layer |
+| `deploy/README.md` | Runbook: GHCR login check (already set up for finance); folders and secrets; first Up; sign in as the admin; owner's proxy step; "Done when"; updating |
+| Secrets (`/StorageDrive/Chat/secrets`, folder 700, files 600, mounted read-only) | `openrouter-api-key` (the `chat-server` key), `webui-secret-key`, `webui-admin-password`. The stack environment carries settings only |
+| Tests | Offline pytest of the pipe and filters with a fake HTTP layer (`httpx.MockTransport`) |
 
 ## 4. Software
 
 | Software | Version | Role | Runs | Cost |
 |---|---|---|---|---|
 | [Open WebUI](https://github.com/open-webui/open-webui) | v0.12.5 (pinned) | Chat UI, accounts with approval, chat history, document search, voice UI, call mode, functions | `webui` container | Free |
-| Router pipe, image tool, voice-note filter | ours | Routing, image generation, audio replies | Inside Open WebUI | Free |
+| Router pipe; Web search, Create image and Voice reply toggles | ours | Routing, web search, image generation, voice notes | Inside Open WebUI | Free |
 | faster-whisper (bundled in Open WebUI) | bundled | Speech-to-text, `base.en` | `webui` container, CPU | Free |
 | [Kokoro-FastAPI](https://github.com/remsky/Kokoro-FastAPI) | v0.9.2, CPU image | Text-to-speech, OpenAI-compatible | `kokoro` container, internal | Free |
 | ChromaDB (bundled) | bundled | Vector store for documents | `webui` container | Free |
@@ -150,16 +169,20 @@ finance already run there.
 | GitHub Actions + GHCR | n/a | Tests, builds and stores the private image | GitHub | Free tier |
 | pytest | latest | Offline tests | CI and laptop | Free |
 
-## 5. Open items to verify in the build
+## 5. Spike findings (2026-10-31, laptop, Open WebUI v0.12.5 and Kokoro v0.9.2)
 
-| # | Item |
-|---|---|
-| O1 | Open WebUI's function API (create and update by id) and admin API keys on v0.12.5, for the startup upsert |
-| O2 | How a pipe sees the user's web-search toggle, so it can add the web plugin |
-| O3 | Whether Open WebUI's embedding settings can pass `provider.data_collection` to OpenRouter. If not, embeddings use default routing |
-| O4 | The request and response shape of OpenRouter's image API, for the tool |
-| O5 | Whether a Filter outlet can attach a generated audio file to the reply as a playable clip (R16). Fallback: auto-play the reply through Kokoro |
-| O6 | Current model slugs and prices for each chain, and which are vision-capable |
+| # | Question | Finding |
+|---|---|---|
+| O1 | Loading functions at startup | **Works.** `/api/v1/functions/create`, `/id/{id}/update`, `/toggle` and `/toggle/global` with an admin token; a second run reports every function unchanged. Better than planned: `WEBUI_ADMIN_EMAIL`/`WEBUI_ADMIN_PASSWORD` make Open WebUI create the admin itself, so the loader signs in with the password and no admin API key exists. That also turns sign-ups off, so the loader turns them back on (pending) once |
+| O2 | The web-search toggle reaching the pipe | **Works.** A toggle filter's inlet sets a flag on the body and the pipe receives it. Tested: a question about a release published two days earlier was answered with sources |
+| O3 | Privacy setting on embeddings | **No:** Open WebUI sends only `model` and `input`. Embeddings use default routing (accepted, R10) |
+| O4 | OpenRouter's image API | `POST /images` with `model` and `prompt`; the image comes back as `data[0].b64_json` plus `media_type`. **Works** end to end, stored as an Open WebUI file |
+| O5 | A voice note on the reply | **Works at the data level:** the outlet's `embeds` event is saved on the message, with the "Recording…"/"ready" status. How the player looks in the browser is checked by the owner (§7) |
+| O6 | Model slugs | All chain models are live; vision is detected from OpenRouter's model list at run time |
+| — | **OpenRouter limit** | `models` takes at most 3 entries: chains go in groups of 3 (§3.1) |
+| — | **Free models** | `:free` models are often rate-limited upstream (429), and the free pool without logging is tiny: the deny → allow retry was needed for the Free chain to answer |
+| — | **Model visibility** | Pipe models without a model record are visible to admins only: `BYPASS_MODEL_ACCESS_CONTROL=true` shows them to every user (R2) |
+| — | **Voice speed (laptop CPU)** | Kokoro: 6 s of speech in 3 s. Whisper `base.en`: the first call downloads the model (~50 s); it then transcribed Kokoro's audio word for word. The N100 will be slower |
 
 ## 6. Build order
 
