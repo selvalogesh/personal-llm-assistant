@@ -1,6 +1,7 @@
 # personal-llm-assistant
 
-A private chat service for family and friends at openai.selvalogesh.com: Open WebUI on the OMV home server, with
+A private chat service for family and friends at [openai.selvalogesh.com](https://openai.selvalogesh.com): Open
+WebUI on the OMV home server, with
 every model request going to OpenRouter through our own routing pipe, and voice handled on the server.
 
 - **Four options in the model picker:** Auto, Creative, Smart and Free. Each is a chain of OpenRouter models that

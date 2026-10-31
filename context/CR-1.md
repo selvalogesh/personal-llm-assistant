@@ -20,7 +20,7 @@ server setup (§6, phase 7) is the owner's next step.**
 | R9 | Images: understand uploaded images (vision), generate images with image models, and draw images as SVG or Python code | Owner |
 | R10 | Documents: embeddings for document search go through OpenRouter, not the server | Owner |
 | R11 | Routing: a new Open WebUI pipe function. `openrouter-routing-stack` is not reused | Owner |
-| R12 | Deployment like finance-analysis CR-5 §7: private repo; GitHub Actions builds a private GHCR image (linux/amd64); OMV Compose stack; updates are a manual Pull, then Up | Owner |
+| R12 | Deployment like finance-analysis CR-5 §7: public repo; GitHub Actions builds a public GHCR image (linux/amd64); OMV Compose stack; updates are a manual Pull, then Up | Owner |
 | R13 | Secrets (the OpenRouter key and others) come from read-only files in `/StorageDrive/Chat/secrets`, never from the compose environment, the same way as finance. Ports are configurable. The owner handles the reverse proxy, TLS and DNS | Owner (first the compose env; changed to files, D5) |
 | R14 | Only Open WebUI's port is published; every other service stays internal to the stack | Owner |
 | R15 | Voice, English only: speech-to-text with **local Whisper**, text-to-speech with **local Kokoro**, both on the server | Owner |
@@ -146,7 +146,7 @@ finance already run there.
 
 | Item | Detail |
 |---|---|
-| `.github/workflows/image.yml` | On push to `main` and on manual dispatch, one run at a time: pytest, then build `deploy/Dockerfile` for `linux/amd64`, then push `:latest` and `:sha-<short>` to GHCR (private). No GHA cache (finance lesson) |
+| `.github/workflows/image.yml` | On push to `main` and on manual dispatch, one run at a time: pytest, then build `deploy/Dockerfile` for `linux/amd64`, then push `:latest` and `:sha-<short>` to GHCR (public). No GHA cache (finance lesson) |
 | `deploy/compose.yaml` | OMV stack **"Chat"**: `webui` (published on `${CHAT_UI_PORT}`) and `kokoro` (internal only). `${CHAT}` = `/StorageDrive/Chat` in OMV's global env holds `data/` and `secrets/` (read-only). No defaults: every variable is required |
 | `deploy/.env.example` | Settings only (port, `WEBUI_URL`, model sizes). Never passwords |
 | `deploy/README.md` | Runbook: GHCR login check (already set up for finance); folders and secrets; first Up; sign in as the admin; owner's proxy step; "Done when"; updating |
@@ -166,7 +166,7 @@ finance already run there.
 | Pyodide code runner (bundled) | bundled | Runs Python for drawn images and charts | In the user's browser | Free |
 | [OpenRouter](https://openrouter.ai) | API | Chat models, web plugin, image models, embeddings | Cloud | Paid, $10/month cap |
 | Docker + OMV Compose | server's | Runs the stack | Home server | Free |
-| GitHub Actions + GHCR | n/a | Tests, builds and stores the private image | GitHub | Free tier |
+| GitHub Actions + GHCR | n/a | Tests, builds and stores the public image | GitHub | Free tier |
 | pytest | latest | Offline tests | CI and laptop | Free |
 
 ## 5. Spike findings (2026-10-31, laptop, Open WebUI v0.12.5 and Kokoro v0.9.2)
@@ -252,3 +252,4 @@ phone check in the runbook's "Done when".
 | D10 | `BYPASS_MODEL_ACCESS_CONTROL=true` | Pipe models are admin-only otherwise; all users have the same access (R2) |
 | D11 | `init` generates `webui-secret-key` itself; the other secrets start as placeholders `webui` refuses | A session key nobody needs to know; the rest must be the owner's |
 | D12 | Voice notes are inline mp3 data URLs (about 1 MB a minute), capped at 1,200 characters | Plays inside the embed without a signed-in request; the cap bounds chat size and Kokoro time on the N100 |
+| D13 | The repo and the GHCR package are public (they started private) | Owner's choice: no secrets in either (D5), public packages are free to store, and the server pulls without a token. A package can't be made private again |

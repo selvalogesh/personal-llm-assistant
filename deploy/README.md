@@ -1,7 +1,7 @@
 # Server runbook (OMV Compose stack "Chat", image from GHCR)
 
 ```
-push to main ─▶ GitHub Actions: tests, build ─▶ ghcr.io/selvalogesh/personal-llm-assistant:latest (private)
+push to main ─▶ GitHub Actions: tests, build ─▶ ghcr.io/selvalogesh/personal-llm-assistant:latest (public)
                                                                │ pulled by
 openai.selvalogesh.com ─▶ your proxy / tunnel ─▶ host :CHAT_UI_PORT ─▶ webui container (OMV stack "Chat")
                                                                          │ kokoro (speech, internal only)
@@ -31,11 +31,9 @@ prepare each (you) step and verify it afterwards.
 1. **Image:**
    - Push or merge into `main`. The workflow [image.yml](../.github/workflows/image.yml) runs the tests, then pushes
      `ghcr.io/selvalogesh/personal-llm-assistant:latest`. Actions → Image → "Run workflow" rebuilds by hand.
-   - The package is **private**. The server's root is already logged in to `ghcr.io` for finance-analysis, with a
-     classic token that has only `read:packages`; that login reads every private package of the account, so
-     nothing new is needed.
-   - Check: `docker manifest inspect ghcr.io/selvalogesh/personal-llm-assistant:latest` works on the server. If it
-     says `denied`, log in again as in finance-analysis's runbook (step 1).
+   - The package is **public**, so the server pulls it without logging in. It holds no secrets: those come from
+     the secrets folder at start.
+   - Check: `docker manifest inspect ghcr.io/selvalogesh/personal-llm-assistant:latest` works on the server.
 2. **Stack:**
    - Add `CHAT=/StorageDrive/Chat` to OMV's global environment (Compose → Files → Global environment), next to
      `FINANCE`.
@@ -86,7 +84,6 @@ prepare each (you) step and verify it afterwards.
   - Push or merge into `main`, and the workflow pushes a new `:latest`.
   - Then in OMV Compose → Files, run **Pull** and then **Up** on the Chat stack. On start the functions update
     themselves; Valves you changed are kept.
-  - If Pull answers `denied`, the GHCR token was revoked or expired: log in again (step 1).
   - A change to `compose.yaml` or `.env.example` must also be copied into the stack.
 - **Upgrading Open WebUI:** change the version in [Dockerfile](Dockerfile), run the tests and a local stack check
   (ENVIRONMENT.md), then push. Check the "Done when" list after the server's Pull and Up.
