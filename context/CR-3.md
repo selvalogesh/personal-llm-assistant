@@ -1,8 +1,8 @@
 # CR-3: Document embeddings on the server
 
 Document search embeds with Open WebUI's own embedding model, running in the `webui` container, instead of
-sending document chunks to OpenRouter's `/embeddings`. This replaces CR-1's R10 and §3.3. **State: built and verified on
-the laptop; on the server, the one-time switch (§3.3, phase 5) is the owner's next step.**
+sending document chunks to OpenRouter's `/embeddings`. This replaces CR-1's R10 and §3.3. **State: done; the server
+embeds documents with bge-small-en-v1.5 since 2026-10-31, and the OpenRouter key exists only in its secrets file.**
 
 ## 1. Requirements
 
@@ -90,7 +90,16 @@ into `main` once phase 4 passes.
 | 2 | **Settings and startup** | `settings.env` (§3.1), `entrypoint.sh` (§3.2); tests: the engine is local and no `RAG_OPENAI_*` setting remains | Done |
 | 3 | **Docs** | `deploy/README.md` (the one-time switch as a (you) step, key rotation without the Documents copy, a troubleshooting row), `ENVIRONMENT.md` (settings table, secrets table: the key is read by the Router only), and "superseded by CR-3" notes on CR-1's R10, §2 (R6 and R10 row) and §3.3 | Done |
 | 4 | **Local stack check** | A fresh stack embeds and answers from a knowledge base with the local engine; a stack switched from the OpenAI engine, as in §3.3 (the spike) | Done (§6) |
-| 5 | **Server (owner)** | Down, Up, then the runbook's "Once: switch the running server to on-server embeddings", and a question about a document | Not started |
+| 5 | **Server (owner)** | Down, Up, then the runbook's "Once: switch the running server to on-server embeddings", and a question about a document | Done (2026-10-31, below) |
+
+**On the server (2026-10-31):** the engine was switched to Default before the key was cleared, so Open WebUI kept
+its saved copy of the OpenRouter key: it saves the key field only while the engine is OpenAI, and hides it on
+Default. Fixed with the same two saves the page makes (OpenAI with an empty key, then Default with bge-small); the
+model loaded from disk again, and the runbook now says how to recover from this. Checked afterwards: engine Default,
+model bge-small, no key saved, and no table in Open WebUI's database holds the key; the model is 382 MB in
+`data/`; the reindex found no knowledge bases (the server had no documents before, only generated images, so
+nobody had files to upload again); a test file was processed in 2 s, Auto answered a question about it with a
+citation, and the file was deleted; `webui` uses about 840 MB.
 
 ## 6. Verification
 

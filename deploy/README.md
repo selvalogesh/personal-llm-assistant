@@ -123,7 +123,9 @@ A server set up before CR-3 has OpenRouter embeddings saved in its database, and
 change saved settings. After the CR-3 update (Down, Up), in Admin → Settings → Documents, in this order:
 
 1. With the engine still on OpenAI, **clear the API key** field and save. That deletes Open WebUI's copy of the
-   OpenRouter key; switching the engine alone would leave it in the database.
+   OpenRouter key; switching the engine alone would leave it in the database. Open WebUI saves the key field only
+   while the engine is OpenAI, and hides it on Default. If you already switched, set the engine back to OpenAI,
+   clear the key, save, then set Default and the model again and save (the model loads from disk, no download).
 2. Set the embedding engine to **Default (SentenceTransformers)** and the model to `BAAI/bge-small-en-v1.5`, then
    save. It downloads the model (about 380 MB); wait until the save finishes.
 3. Click **Reindex knowledge base vectors**.
