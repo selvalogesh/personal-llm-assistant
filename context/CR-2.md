@@ -183,7 +183,7 @@ into `main` once phase 6 passes.
 | 4 | **CI** | `ci.yml` (pytest; on `main`, move `stable`); `dependabot.yml`; delete `deploy/Dockerfile`, `.dockerignore`, `image.yml` | Done |
 | 5 | **Docs** | `deploy/README.md` (diagram, routines, rollback, troubleshooting for the fetch and the guard), `ENVIRONMENT.md` (`settings.env`, `CHAT_REF`, local check), `CLAUDE.md` (a guardrail for the official image) and `README.md`, and "superseded by CR-2" notes on CR-1's R12, §3.5 and §3.6 | Done |
 | 6 | **Local stack check** | CR-1's local check through `compose.local.yaml`, plus a real fetch from GitHub (of this branch, since `stable` appears only after the merge) | Done (§7) |
-| 7 | **Cutover (owner)** | Paste `compose.yaml` and the environment (with `CHAT_REF=stable`) into the stack, then Pull, Down, Up, and the runbook's "Done when". `data/` and `secrets/` carry over. Then, optionally, delete the GHCR package | Done (2026-10-31); GHCR package deletion pending |
+| 7 | **Cutover (owner)** | Paste `compose.yaml` and the environment (with `CHAT_REF=stable`) into the stack, then Pull, Down, Up, and the runbook's "Done when". `data/` and `secrets/` carry over. Then, optionally, delete the GHCR package | Done (2026-10-31), GHCR package deleted |
 
 ## 7. Verification
 
@@ -221,7 +221,7 @@ moving `stable`, and the runbook's "Done when".
 | D7 | The entrypoint refuses to start when the running Open WebUI version differs from the repo's `compose.yaml` | It keeps the Open WebUI version and our functions moving together, and catches a forgotten paste. The owner is there at every Up that can cause it; a reboot fetches nothing |
 | D8 | The update routine is Down, then Up | Up leaves a running, unchanged `webui` alone, so the new functions wouldn't load |
 | D9 | Rollback covers code only, within one Open WebUI version | Open WebUI migrates its database when it upgrades, and going back a version isn't supported. After a bad Open WebUI upgrade, restore `data/` from the backup with the old tag |
-| D10 | Deleting the GHCR package after the cutover is the owner's choice | Nothing pulls it any more. It holds no secrets (CR-1 D14), only an old copy of the code |
+| D10 | Deleting the GHCR package after the cutover is the owner's choice | Nothing pulls it any more. It holds no secrets (CR-1 D14), only an old copy of the code. Owner deleted it on 2026-10-31 |
 | D11 | Rejected: a small GHCR image carrying only our files, beside the official image | It keeps an image of our own, which R2 rules out. It would have kept the plain Pull, Up routine and image tags for rollback |
 | D12 | The fetch is a shallow fetch of one commit plus `git archive` of the two folders, not a sparse checkout | Simpler, and only the needed folders land on the server. The download is the whole commit, about 100 KB |
 | D13 | The Open WebUI tag is written literally in each service, and a test checks they match | Dependabot can update literal tags; it may not follow a YAML anchor |
