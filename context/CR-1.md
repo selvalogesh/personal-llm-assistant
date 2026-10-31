@@ -2,8 +2,8 @@
 
 A private chat service at openai.selvalogesh.com for the owner, family and friends. It runs Open WebUI on the OMV
 home server, sends model traffic to OpenRouter through a routing pipe function, and handles voice locally. This
-file records the requirements, the proposed design and the software it uses. **State: requirements agreed; design
-proposed and waiting for the owner's review. Nothing has been built yet.**
+file records the requirements, the design and the software it uses. **State: built and verified on the laptop;
+server setup (§6, phase 7) is the owner's next step.**
 
 ## 1. Requirements
 
@@ -40,7 +40,7 @@ finance already run there.
 | R5 | No setup can guarantee zero refusals | Low-refusal models are first in every default chain. There's no refusal detector (decision D3) |
 | R15 and the N100 | Whisper and Kokoro share 4 cores with ownCloud and finance | Small English models. Expect a few seconds per voice turn, and longer when several people use voice at once |
 
-## 3. Proposed design
+## 3. Design
 
 ```
  openai.selvalogesh.com ─▶ (owner's proxy / tunnel) ─▶ host :CHAT_UI_PORT
@@ -191,14 +191,14 @@ Each phase ends in a commit (`CR-1: …`) on branch `story/main/CR-1-chat-servic
 
 | # | Phase | Output | State |
 |---|---|---|---|
-| 0 | **Repo** | `git init`; first commit on `main` holds `context/` only. Adds `CLAUDE.md` (guardrails and CR conventions, like finance), `.gitignore`, `.gitattributes` (`*.sh` LF), `.dockerignore` (allowlist). Then `gh repo create selvalogesh/personal-llm-assistant --private` | Not started |
-| 1 | **Spike: verify O1–O6** on the laptop | Open WebUI v0.12.5 and Kokoro run in Docker with the laptop key. The function API, the web-search flag in a pipe's body, embedding options, the image API shape, audio on a filter outlet, and current model slugs are tested. Results are recorded in §5, and the design is adjusted where needed. Throwaway: nothing from the spike is committed except the findings | Not started |
-| 2 | **Router pipe** | `functions/router.py` (chains in Valves, privacy order, 402 → Free, vision chain, web plugin, footer, friendly errors, `user` field) plus `tests/test_router.py` with a fake HTTP layer | Not started |
-| 3 | **Image tool, voice-note filter** | `functions/image_tool.py` and `functions/voice_note.py`, plus tests | Not started |
-| 4 | **Image** | `deploy/Dockerfile` (`FROM` Open WebUI v0.12.5, settings as env defaults), `deploy/entrypoint.sh` (reads secrets files, starts Open WebUI, upserts functions), `deploy/load_functions.py`. Checked with a local build and run | Not started |
-| 5 | **CI** | `.github/workflows/image.yml` (pytest, build linux/amd64, push `:latest` and `:sha-…`). First run green; package private | Not started |
-| 6 | **Deploy files** | `deploy/compose.yaml` (`init` one-shot like finance's: folders, placeholder secrets, owners and modes; `webui`; `kokoro` internal), `deploy/.env.example`, `deploy/README.md` (runbook with "Done when"), `ENVIRONMENT.md` | Not started |
-| 7 | **Server setup (owner)** | Owner follows the runbook: global env `CHAT`, stack "Chat", secrets, first Up, admin account and API key, proxy for openai.selvalogesh.com | Not started |
+| 0 | **Repo** | `git init`; first commit on `main` holds `context/` only. Adds `CLAUDE.md` (guardrails and CR conventions, like finance), `.gitignore`, `.gitattributes` (`*.sh` LF), `.dockerignore` (allowlist). Then `gh repo create selvalogesh/personal-llm-assistant --private` | Done |
+| 1 | **Spike: verify O1–O6** on the laptop | Open WebUI v0.12.5 and Kokoro run in Docker with the laptop key. The function API, the web-search flag in a pipe's body, embedding options, the image API shape, audio on a filter outlet, and current model slugs are tested. Results are recorded in §5, and the design is adjusted where needed. Throwaway: nothing from the spike is committed except the findings | Done (§5) |
+| 2 | **Router pipe** | `functions/router.py` (chains in Valves, privacy order, 402 → Free, vision chain, web plugin, footer, friendly errors, `user` field) plus `tests/test_router.py` with a fake HTTP layer | Done |
+| 3 | **Toggles** | `functions/web_search.py`, `functions/image_mode.py` and `functions/voice_note.py` (the image Tool became a toggle, §3.2), plus tests | Done, as toggles |
+| 4 | **Image** | `deploy/Dockerfile` (`FROM` Open WebUI v0.12.5, settings as env defaults), `deploy/entrypoint.sh` (reads secrets files, starts Open WebUI, upserts functions), `deploy/load_functions.py`. Checked with a local build and run | Done |
+| 5 | **CI** | `.github/workflows/image.yml` (pytest, build linux/amd64, push `:latest` and `:sha-…`). First run green; package private | Done |
+| 6 | **Deploy files** | `deploy/compose.yaml` (`init` one-shot like finance's: folders, placeholder secrets, owners and modes; `webui`; `kokoro` internal), `deploy/.env.example`, `deploy/README.md` (runbook with "Done when"), `ENVIRONMENT.md` | Done |
+| 7 | **Server setup (owner)** | Owner follows the runbook: global env `CHAT`, stack "Chat", secrets, first Up, proxy for openai.selvalogesh.com, sign in | Not started |
 
 **Open WebUI settings, set as env defaults in the image** (Open WebUI saves them to its database on first start;
 later changes go through Admin → Settings):
@@ -215,6 +215,15 @@ later changes go through Admin → Settings):
 **Before phase 1:** the OpenRouter balance must be above $0. The spike makes a few paid calls, well under $0.10.
 
 ## 7. Verification
+
+**Results on the laptop (2026-10-31):** 29 offline tests pass. The locally built image ran as the real compose
+stack (throwaway folder, laptop key), and these passed against it: `init` creates the tree and `webui` refuses
+placeholders; no secret appears in `docker inspect`; the loader installs the functions and is unchanged on restart;
+a sign-up lands as pending; only the four options appear; a chat answers; an uploaded document is embedded through
+OpenRouter and answered from; Kokoro speech comes back through Open WebUI and Whisper transcribes it word for word.
+In the spike: web search, vision, image generation, the Creative and Free chains, and the voice note saved on a
+message. **Left for the owner's browser:** how the voice-note player and the toggles look, call mode, and the
+phone check in the runbook's "Done when".
 
 | Check | How |
 |---|---|
@@ -237,3 +246,9 @@ later changes go through Admin → Settings):
 | D4 | Speech-to-text and text-to-speech run locally (Whisper, Kokoro) | Owner's choice (R15): free and private |
 | D5 | Secrets only from read-only files in `/StorageDrive/Chat/secrets` (each file mode 600, holding only its value), never from the stack environment. The same as finance | OMV commits the stack environment to git (finance decision 32). Owner's choice |
 | D6 | Users see only the pipe's options | Predictable cost within $10 shared |
+| D7 | Web search, image generation and voice notes are **toggle filters** that the pipe or the outlet acts on | Deterministic, one click per chat; a Tool depends on a model deciding to call it (spike) |
+| D8 | The admin is created by Open WebUI from `WEBUI_ADMIN_EMAIL` and the password file; the loader signs in with it; no admin API key | One secret fewer, and nobody can claim admin by signing up first (spike O1) |
+| D9 | Chains go to OpenRouter in groups of three; each group tries non-logging providers, then logging ones, before the next | OpenRouter's `models` limit is 3; free models were rate-limited without the logging pool (spike) |
+| D10 | `BYPASS_MODEL_ACCESS_CONTROL=true` | Pipe models are admin-only otherwise; all users have the same access (R2) |
+| D11 | `init` generates `webui-secret-key` itself; the other secrets start as placeholders `webui` refuses | A session key nobody needs to know; the rest must be the owner's |
+| D12 | Voice notes are inline mp3 data URLs (about 1 MB a minute), capped at 1,200 characters | Plays inside the embed without a signed-in request; the cap bounds chat size and Kokoro time on the N100 |
