@@ -1,0 +1,6 @@
+# Allowlist: only the functions and the startup scripts go into the image (see deploy/Dockerfile).
+*
+!functions/
+!deploy/entrypoint.sh
+!deploy/load_functions.py
+**/__pycache__

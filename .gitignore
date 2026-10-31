@@ -1,0 +1,8 @@
+**/__pycache__
+.pytest_cache/
+.venv/
+**/.env
+# Raw chat logs and local scratch never go in git
+*.txt
+!requirements*.txt
+spike/
