@@ -33,9 +33,10 @@ read_secret() {
 : "${WEBUI_ADMIN_EMAIL:?set WEBUI_ADMIN_EMAIL in the stack environment}"
 WEBUI_SECRET_KEY="$(read_secret webui-secret-key)"
 WEBUI_ADMIN_PASSWORD="$(read_secret webui-admin-password)"
-# The Router reads the key file itself on every request; document search needs it in Open WebUI's settings.
-RAG_OPENAI_API_KEY="$(read_secret openrouter-api-key)"
-export WEBUI_SECRET_KEY WEBUI_ADMIN_PASSWORD RAG_OPENAI_API_KEY
+export WEBUI_SECRET_KEY WEBUI_ADMIN_PASSWORD
+# Only the Router uses the OpenRouter key, reading the file itself on every request (CR-3: documents embed on the
+# server). Checked here only so a placeholder stops the start with a clear message, not the first chat.
+read_secret openrouter-api-key > /dev/null
 # Kokoro needs no key, but Open WebUI's OpenAI-style speech client sends one (set here, not in settings.env, where
 # the name trips the secrets linter).
 export AUDIO_TTS_OPENAI_API_KEY="${AUDIO_TTS_OPENAI_API_KEY:-not-needed}"

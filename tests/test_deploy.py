@@ -41,6 +41,14 @@ def test_settings_keep_the_cr1_choices():
     assert s["BYPASS_MODEL_ACCESS_CONTROL"] == "true"
 
 
+def test_documents_embed_on_the_server():
+    # CR-3: Open WebUI's own engine with bge-small; no document text and no key go to OpenRouter for embeddings.
+    s = settings()
+    assert (s["RAG_EMBEDDING_ENGINE"], s["RAG_EMBEDDING_MODEL"]) == ("", "BAAI/bge-small-en-v1.5")
+    assert not [key for key in s if key.startswith("RAG_OPENAI_")]
+    assert "RAG_OPENAI_API_KEY" not in (ROOT / "deploy/entrypoint.sh").read_text(encoding="utf-8")
+
+
 def test_open_webui_is_the_official_image_at_one_exact_version():
     images = {SERVICES[name]["image"] for name in ("init", "webui")}
     assert len(images) == 1, f"init and webui must run the same Open WebUI: {images}"
