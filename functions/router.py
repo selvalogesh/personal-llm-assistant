@@ -131,6 +131,11 @@ TOOL_LIMITS = {"generate_image": 1, "run_python": 3, "voice_reply": 1}  # per re
 TOOL_LABELS = {"generate_image": "image", "run_python": "code", "voice_reply": "voice"}
 WEB_TOOL_USES = 2  # OpenRouter's max_uses; it ran one more than asked (CR-4 O6)
 CODE_NOTE = "This request needs code to run: use the run_python tool, then answer from what it prints."
+# Without it, models told the user they can't send audio, above the voice note they were sending (CR-4 phase 7)
+VOICE_NOTE = (
+    "Your reply will also reach the user as a voice note, read aloud automatically. Write it as you would say it. "
+    "Don't say you can't record or send audio, and don't label it as a script or a transcript."
+)
 DATA_IMAGE = re.compile(r"data:image/[\w.+-]+;base64,[A-Za-z0-9+/=]+")  # a chart in Pyodide's output (CR-4 O2)
 OUTPUT_LIMIT = 4000  # characters of a tool's output shown or sent back
 
@@ -491,7 +496,8 @@ class Pipe:
         }
         if intent["image"]:
             return self._image(body, turn)  # an image reply has nothing to say aloud (CR-4 D2)
-        if intent["voice"] in ("once", "on") or (intent["voice_on"] and intent["voice"] != "off"):
+        turn["voiced"] = intent["voice"] in ("once", "on") or (intent["voice_on"] and intent["voice"] != "off")
+        if turn["voiced"]:
             self._voice(turn, "once")
         return self._chat(body, chain_id, turn)
 
@@ -606,8 +612,9 @@ class Pipe:
                 models = await self._capable(models, "tools", self.valves.TOOL_MODELS)
             return models
 
-        if code:
-            body = {**body, "messages": with_note(messages, CODE_NOTE)}
+        notes = [note for note, wanted in ((CODE_NOTE, code), (VOICE_NOTE, turn.get("voiced"))) if wanted]
+        if notes:
+            body = {**body, "messages": with_note(messages, "\n\n".join(notes))}
         # Paid chain first, then the free chain as the last resort (R5); skip the repeat when they're the same.
         plan = [("chain", await suited(split_models(getattr(self.valves, CHAINS[chain_id][1]))))]
         if chain_id != "free":

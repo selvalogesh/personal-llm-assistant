@@ -4,7 +4,8 @@ The chat input loses its integrations button. The Router works out from each mes
 an image, an answer from the web, a voice note or code that runs, and returns that format. A cheap classifier
 decides before each turn, and models that can call tools may also call them while answering. Misses are recorded,
 and the strong ones become examples that improve the classifier over time for the person who wrote them. This replaces CR-1's toggles (§3.1 web
-search, §3.2 Create image, §3.4 Voice reply, D7). **State: spike done (§4), design adjusted; building next.**
+search, §3.2 Create image, §3.4 Voice reply, D7). **State: built and checked on the laptop (phases 1–7); merging into
+`main` and the server (phase 8) are next.**
 
 ## 1. Requirements
 
@@ -213,8 +214,29 @@ into `main` once phase 7 passes.
 | 4 | **Voice** | `voice_note.py` without the toggle, reading the store; the Router's per-reply marks (`once`, or voice mode on); tests | Done: 91 offline tests, including one where the filter reads the mark the Router wrote |
 | 5 | **Toggles out** | Delete `web_search.py` and `image_mode.py`; retired ids in `load_functions.py`; `ENABLE_CODE_INTERPRETER=false`; `deploy/detections.py`; tests | Done: 99 offline tests; a test checks no function is a toggle |
 | 6 | **Docs** | `deploy/README.md` (the one-time Code Interpreter switch, checks, the `detections.py` commands, a troubleshooting row), `ENVIRONMENT.md` (new valves, the store), "superseded by CR-4" notes on CR-1 §3.1 (web toggle), §3.2, §3.4 and D7 | Done, with the root README |
-| 7 | **Local stack check** | §6 against a stack from the working tree, and a stack upgraded from the current `stable` | Not started |
+| 7 | **Local stack check** | §6 against a stack from the working tree, and a stack upgraded from the current `stable` | Done (below); it found the voice-note wording (D18) |
 | 8 | **Server (owner)** | Down, Up after CI moves `stable`, then the one-time switch and the runbook's checks | Not started |
+
+**On the laptop (2026-11-01, phase 7):** a stack started from `stable` (commit "CR-1: Generated image shows when the
+prompt has new lines or brackets", four functions), then Down, Up on the working tree, in Edge through Playwright,
+with the laptop key (about $0.15 in all):
+- **Upgrade:** the loader updated the Router and the voice filter and logged `web_search: removed (retired)` and
+  `image_mode: removed (retired)`. The Code Interpreter was still saved as on, so the Integrations button stayed;
+  after the one-time switch it was gone for the admin and for a user at phone width.
+- **Formats:** "Draw a lighthouse at dusk" gave an image (`auto: image`, $0.0071) and "same, but in winter" a
+  matching one from a rewritten prompt; today's technology news came with sources (`auto: web search`); "plot sin(x)
+  from 0 to 10" ran in Pyodide in the browser and showed a collapsed Python block, the chart and the explanation
+  (`auto: code`, $0.0007); "Reply with a voice note" voiced that reply only; "From now on, voice notes" voiced the
+  next three replies and "stop the voice notes" ended it.
+- **The voice-note wording (D18):** the first run's voiced replies said "I can't actually record audio, but here's
+  the script" above the real voice note. After the fix, they just talk.
+- **Learning:** "Describe a sunset over Marina beach in a few words", then "No, I meant an actual picture" gave an
+  image and a learned miss in `detections.py list`.
+- **Tools as backup:** with `CLASSIFIER_MODEL` set to a model that doesn't exist (the log: `classifier failed,
+  answering as chat`), a picture request was answered by the `generate_image` tool and a search request by
+  OpenRouter's search tool, with sources; both became learned misses.
+- **Fresh install** (an empty folder, the working tree): the loader installed only `router` and `voice_note`, the
+  Code Interpreter was off from `settings.env`, and the chat input had no Integrations button, with no manual step.
 
 ## 6. Verification
 
@@ -250,3 +272,4 @@ into `main` once phase 7 passes.
 | D15 | The classifier runs on `deepseek/deepseek-v4.1-flash`, in its own valve `CLASSIFIER_MODEL`; titles and tags stay on `TASK_MODEL` (qwen3.7-flash) | Owner's choice (O5). Every reply waits for it, and it was the fastest (0.6 s median against Qwen's 0.95 s), with a strict JSON schema, so every field is always there. Accuracy was within one message of Qwen and GLM. It costs about 3× Qwen, about $0.15 per 3,000 turns. Rejected: qwen3.7-flash (no new valve and cheapest, but slower, plain JSON only and loose with the voice field) and glm-5.3-flash (43/43, but 2–2.8 s in slow cases) |
 | D16 | The Router reads the classifier with care: the voice mode the chat is already in counts as `none`; `corrects_previous` is ignored without a previous turn; a correction is recorded only when it differs from what the previous turn used | O5: Qwen answered `off` when voice was already off, and DeepSeek once marked a first message as a correction. Without these, a false miss would become a learned example |
 | D17 | The Router keeps one HTTP client open and reuses it, instead of a new one per call | Found in phase 2: the first eval took 1.6 s median against the spike's 0.6 s, and a new connection per call was the whole difference (about 0.7 s each). The classifier would have paid it before every answer, and every chat reply was already paying it before CR-4. The client is made again when the event loop, the transport (tests) or `TIMEOUT_SECONDS` changes |
+| D18 | A reply the Router marks for a voice note gets a system note: it will be read aloud, so write it as spoken and don't say audio can't be sent | Found in phase 7: without it, DeepSeek wrote "I can't actually record audio, but here's the script" above the voice note it was sending. Code turns already get a note the same way (`with_note`) |

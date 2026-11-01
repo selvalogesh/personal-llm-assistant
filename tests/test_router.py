@@ -441,6 +441,25 @@ def test_replies_marked_for_voice_notes(key_file):
     assert voiced(pipe) == ["r1", "r3", "r4"]
 
 
+def test_a_voiced_reply_tells_the_model_it_will_be_read_aloud(key_file):
+    # Without it, models said they can't send audio above the voice note (CR-4 phase 7)
+    fake = FakeOpenRouter([OK, OK], intents=[intent(voice="once"), intent()])
+    pipe = make_pipe(fake, key_file)
+    turn(pipe, "say it aloud", "r1")
+    turn(pipe, "and in text?", "r2")
+    assert fake.requests[0]["messages"][0] == {"role": "system", "content": router.VOICE_NOTE}
+    assert fake.requests[1]["messages"][0]["role"] == "user"
+
+
+def test_notes_join_an_existing_system_message(key_file):
+    fake = FakeOpenRouter([OK], models=[{"id": "t", "supported_parameters": ["tools"]}],
+                          intents=[intent(code=True, voice="once")])
+    pipe = make_pipe(fake, key_file, AUTO_MODELS="t")
+    turn(pipe, "compute it and read it out", "r1", messages=[{"role": "system", "content": "Be brief."}], ask=Browser({}))
+    system = fake.requests[0]["messages"][0]["content"]
+    assert system == f"Be brief.\n\n{router.CODE_NOTE}\n\n{router.VOICE_NOTE}"
+
+
 def test_image_turns_are_never_voiced(key_file):
     fake = FakeOpenRouter(images=[IMAGE_OK], intents=[intent(image=True, image_prompt="a cat", voice="once")])
     pipe = make_pipe(fake, key_file)
