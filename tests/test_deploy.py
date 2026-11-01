@@ -41,6 +41,11 @@ def test_settings_keep_the_cr1_choices():
     assert s["BYPASS_MODEL_ACCESS_CONTROL"] == "true"
 
 
+def test_the_code_interpreter_is_off():
+    # It shows the Integrations button; the Router runs Python in the browser itself (CR-4 §3.4, O1)
+    assert settings()["ENABLE_CODE_INTERPRETER"] == "false"
+
+
 def test_documents_embed_on_the_server():
     # CR-3: Open WebUI's own engine with bge-small; no document text and no key go to OpenRouter for embeddings.
     s = settings()

@@ -7,6 +7,9 @@ function's code is updated: Valves changed in Admin → Functions are kept.
 On the very first start it also turns sign-ups back on, as pending (R3): Open WebUI turns them off whenever it
 creates the admin from the environment. A marker file in the data folder makes sure that happens only once, so a
 later choice in Admin → Settings sticks.
+
+Functions this repo no longer has are removed only when their id is in RETIRED, so functions the owner adds in the
+UI are never touched (CR-4 D7).
 """
 
 import json
@@ -21,6 +24,8 @@ from pathlib import Path
 BASE = os.environ.get("LOADER_BASE_URL", "http://127.0.0.1:8080")
 FUNCTIONS_DIR = Path(os.environ.get("LOADER_FUNCTIONS_DIR", "/app/chat/functions"))
 MARKER = Path(os.environ.get("LOADER_MARKER", "/app/backend/data/.chat-first-start-done"))
+# The Web search and Create image toggles, replaced by the Router's classifier (CR-4 §3.6)
+RETIRED = ("web_search", "image_mode")
 
 
 def log(message: str) -> None:
@@ -90,10 +95,21 @@ def sync_function(token: str, path: Path) -> None:
     if not existing.get("is_active"):
         call("POST", f"/api/v1/functions/id/{function_id}/toggle", token)
         log(f"{function_id}: turned on")
-    # Filters apply to every model (the Router's options): the toggles then show in every chat.
+    # Filters apply to every model (the Router's options), so the voice filter runs after every reply.
     if existing.get("type") == "filter" and not existing.get("is_global"):
         call("POST", f"/api/v1/functions/id/{function_id}/toggle/global", token)
         log(f"{function_id}: made global")
+
+
+def retire(token: str, function_id: str) -> None:
+    try:
+        call("GET", f"/api/v1/functions/id/{function_id}", token)
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 404):  # not installed
+            return
+        raise
+    call("DELETE", f"/api/v1/functions/id/{function_id}/delete", token)
+    log(f"{function_id}: removed (retired)")
 
 
 def first_start(token: str) -> None:
@@ -113,13 +129,15 @@ def main() -> int:
     token = call("POST", "/api/v1/auths/signin", body={"email": email, "password": password})["token"]
     first_start(token)
     failed = 0
-    for path in sorted(FUNCTIONS_DIR.glob("*.py")):
+    jobs = [(path.stem, sync_function, path) for path in sorted(FUNCTIONS_DIR.glob("*.py"))]
+    jobs += [(function_id, retire, function_id) for function_id in RETIRED]
+    for name, job, arg in jobs:
         try:
-            sync_function(token, path)
+            job(token, arg)
         except Exception as e:  # one broken function shouldn't block the others
             failed += 1
             detail = e.read().decode(errors="replace")[:300] if isinstance(e, urllib.error.HTTPError) else e
-            log(f"{path.stem}: FAILED: {detail}")
+            log(f"{name}: FAILED: {detail}")
     log("done" if not failed else f"done, {failed} failed")
     return 1 if failed else 0
 

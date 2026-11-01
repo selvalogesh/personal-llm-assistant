@@ -21,10 +21,6 @@ from pydantic import BaseModel, Field
 
 log = logging.getLogger("router")
 
-# Flags the toggle filters (web_search.py, image_mode.py) set on the request body.
-WEB_FLAG = "router_web_search"
-IMAGE_FLAG = "router_image_mode"
-
 # ---------- the classifier (CR-4 §3.1) ----------
 
 # One line each: message → formats. Kept apart from the labelled set in tests/, which measures them (CR-4 §4, O5).
@@ -477,10 +473,8 @@ class Pipe:
         if __task__:
             return await self._task(body, key, user_id)
 
-        image_flag = bool(body.pop(IMAGE_FLAG, False))
-        web_flag = bool(body.pop(WEB_FLAG, False))
         metadata = __metadata__ or {}
-        intent = await self._decide(body, key, user_id, metadata, image_flag, web_flag)
+        intent = await self._decide(body, key, user_id, metadata)
         turn = {
             "key": key,
             "user_id": user_id,
@@ -503,16 +497,16 @@ class Pipe:
 
     # ---------- the turn's formats (CR-4 §3.1, §3.7) ----------
 
-    async def _decide(self, body, key, user_id, metadata, image_flag, web_flag) -> dict:
-        """What this turn's reply should be: the classifier's reading with the toggles on top. Also keeps the chat's
-        voice mode and the miss log. Never raises: a classifier that fails or is slow means plain chat."""
+    async def _decide(self, body, key, user_id, metadata) -> dict:
+        """What this turn's reply should be, as the classifier reads it. Also keeps the chat's voice mode and the miss
+        log. Never raises: a classifier that fails or is slow means plain chat."""
         messages = body.get("messages", [])
         chat_id = metadata.get("chat_id") or ""
         text = last_user_text(messages).strip()
         prev_text, last_image = previous_turn(messages)
         voice_on = bool(chat_id) and self._remember("voice_on", chat_id, default=False)
         intent, cost = dict(PLAIN), 0.0
-        if text and not image_flag:
+        if text:
             learned = self._remember("examples", user_id, self.valves.LEARNED_EXAMPLES, default=[]) if user_id else []
             try:
                 intent, cost = await asyncio.wait_for(
@@ -521,14 +515,7 @@ class Pipe:
                 )
             except Exception as e:
                 log.warning("router: classifier failed, answering as chat: %r", e)
-        intent = {
-            **intent,
-            "image": intent["image"] or image_flag,
-            "web": intent["web"] or web_flag,
-            "formats": format_names(intent),
-            "cost": cost,
-            "voice_on": voice_on,
-        }
+        intent = {**intent, "formats": format_names(intent), "cost": cost, "voice_on": voice_on}
         if chat_id:
             await self._record(chat_id, user_id, metadata.get("message_id") or "", text, intent)
         return intent
@@ -1008,8 +995,6 @@ class Pipe:
         formats = intent["formats"] + [tools[k] for k in turn["used"] if tools[k] not in intent["formats"]]
         if formats:
             parts.append("auto: " + ", ".join(formats))
-        elif intent["web"]:
-            parts.append("web search")
         await turn["emitter"]({"type": "status", "data": {"description": " · ".join(parts), "done": True}})
 
     async def _complete(self, payload: dict, key: str, privacy: bool) -> tuple[str, float]:
@@ -1048,10 +1033,7 @@ class Pipe:
     # ---------- image generation ----------
 
     async def _image(self, body, turn) -> AsyncGenerator[str, None]:
-        prompt = turn["intent"]["image_prompt"] or turn["text"]
-        if not prompt:
-            yield "Describe the image you want in your message."
-            return
+        prompt = turn["intent"]["image_prompt"] or turn["text"]  # the classifier only runs on a message with text
         try:
             markdown, model, cost = await self._make_image(prompt, turn)
         except RouteError as e:

@@ -4,19 +4,16 @@ import json
 import httpx
 import pytest
 
-from conftest import Emitter, load, run
+from conftest import ROOT, Emitter, load, run
 
 voice = load("functions/voice_note.py")
-web = load("functions/web_search.py")
-image = load("functions/image_mode.py")
 router = load("functions/router.py")
 
 
-def test_toggles_set_the_routers_flags():
-    for module, flag in ((web, router.WEB_FLAG), (image, router.IMAGE_FLAG)):
-        f = module.Filter()
-        assert f.toggle is True and f.icon.startswith("data:image/svg+xml")
-        assert run(f.inlet({"messages": []}))[flag] is True
+def test_no_function_is_a_toggle():
+    # A toggle filter shows the Integrations button (CR-4 O1)
+    for path in (ROOT / "functions").glob("*.py"):
+        assert "self.toggle" not in path.read_text(encoding="utf-8"), path.name
 
 
 def test_speakable_keeps_only_prose():
@@ -44,11 +41,6 @@ def voice_filter(handler, store_path):
     f.valves = f.Valves(STORE_PATH=str(store_path))
     f.transport = httpx.MockTransport(handler)
     return f
-
-
-def test_voice_filter_has_no_toggle():
-    # It runs after every reply; the Router decides which ones (CR-4 §3.5)
-    assert not hasattr(voice.Filter(), "toggle")
 
 
 def test_reply_gets_a_voice_note(store_path):

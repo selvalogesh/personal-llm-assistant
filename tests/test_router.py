@@ -206,13 +206,12 @@ def test_missing_or_placeholder_key(tmp_path):
     assert fake.requests == []
 
 
-def test_web_search_toggle_adds_the_plugin(key_file):
+def test_old_toggle_flags_are_ignored(key_file):
+    # The toggles are gone (CR-4 §3.6); a flag left on a request changes nothing and never reaches OpenRouter
     fake = FakeOpenRouter([OK])
-    emitter = Emitter()
-    chat(make_pipe(fake, key_file), emitter=emitter, **{router.WEB_FLAG: True})
-    assert fake.requests[0]["plugins"] == [{"id": "web", "engine": "parallel", "max_results": 3}]
-    assert router.WEB_FLAG not in fake.requests[0]
-    assert emitter.statuses()[0].endswith("web search")
+    chat(make_pipe(fake, key_file), router_web_search=True, router_image_mode=True)
+    assert "plugins" not in fake.requests[0] and "router_web_search" not in fake.requests[0]
+    assert fake.image_requests == []
 
 
 def test_images_switch_to_vision_models(key_file):
@@ -248,29 +247,38 @@ def test_create_image_tries_the_next_model_on_failure(key_file):
         (502, {"error": {"message": "generation failed"}}),
         (200, {"data": [{"b64_json": png, "media_type": "image/webp"}], "usage": {"cost": 0.018}}),
     ]
-    fake = FakeOpenRouter(images=images)
+    fake = FakeOpenRouter(images=images, intents=[intent(image=True, image_prompt="a red lighthouse")])
     emitter = Emitter()
     pipe = make_pipe(fake, key_file, IMAGE_MODELS="img/a, img/b")
-    text = chat(pipe, content="a red lighthouse", emitter=emitter, **{router.IMAGE_FLAG: True})
+    text = chat(pipe, content="draw a red lighthouse", emitter=emitter)
     assert text == f"![a red lighthouse](data:image/webp;base64,{png})"  # stored inline outside Open WebUI
     assert [r["model"] for r in fake.image_requests] == ["img/a", "img/b"]
-    assert emitter.statuses() == ["img/b · 0 tokens · $0.0180"]
+    assert emitter.statuses() == ["img/b · 0 tokens · $0.0180 · auto: image"]
     assert fake.requests == []
+
+
+def test_every_image_model_failing_gives_a_plain_message(key_file):
+    fake = FakeOpenRouter(images=[(402, {"error": {"message": "Insufficient credits"}})],
+                          intents=[intent(image=True, image_prompt="a cat")])
+    assert chat(make_pipe(fake, key_file, IMAGE_MODELS="img/a, img/b"), content="draw a cat") == router.FRIENDLY["credits"]
+    assert len(fake.image_requests) == 1  # no credits: the next image model can't either
 
 
 def test_create_image_alt_text_stays_on_one_line(key_file):
     png = base64.b64encode(b"fake-image").decode()
-    fake = FakeOpenRouter(images=[(200, {"data": [{"b64_json": png, "media_type": "image/webp"}]})])
     prompt = "generate a bird [image]\n\nmake the bird beautiful and colourful"
-    text = chat(make_pipe(fake, key_file), content=prompt, **{router.IMAGE_FLAG: True})
+    fake = FakeOpenRouter(images=[(200, {"data": [{"b64_json": png, "media_type": "image/webp"}]})],
+                          intents=[intent(image=True, image_prompt=prompt)])
+    text = chat(make_pipe(fake, key_file), content="a bird please")
     alt = "generate a bird image make the bird beautiful and colourful"
     assert text == f"![{alt}](data:image/webp;base64,{png})"
     assert fake.image_requests[0]["prompt"] == prompt  # the model still gets the prompt as written
 
 
-def test_create_image_needs_a_description(key_file):
-    fake = FakeOpenRouter()
-    assert "Describe the image" in chat(make_pipe(fake, key_file), content="  ", **{router.IMAGE_FLAG: True})
+def test_image_without_a_prompt_from_the_classifier_uses_the_message(key_file):
+    fake = FakeOpenRouter(images=[IMAGE_OK], intents=[intent(image=True)])
+    chat(make_pipe(fake, key_file), content="a lighthouse at dusk")
+    assert fake.image_requests[0]["prompt"] == "a lighthouse at dusk"
 
 
 def test_a_chats_own_max_tokens_is_passed_on(key_file):
@@ -338,10 +346,10 @@ def test_image_turn_uses_the_classifiers_prompt(key_file):
     assert fake.requests == []
 
 
-def test_image_toggle_skips_the_classifier(key_file):
-    fake = FakeOpenRouter(images=[IMAGE_OK])
-    chat(make_pipe(fake, key_file), content="a lighthouse", **{router.IMAGE_FLAG: True})
-    assert fake.classify_requests == []
+def test_a_message_without_text_skips_the_classifier(key_file):
+    fake = FakeOpenRouter([OK])
+    chat(make_pipe(fake, key_file), content=[{"type": "image_url", "image_url": {"url": "data:x"}}])
+    assert fake.classify_requests == [] and len(fake.requests) == 1
 
 
 def test_failed_classifier_means_plain_chat(key_file):
