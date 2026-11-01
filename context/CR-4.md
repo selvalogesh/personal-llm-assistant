@@ -134,7 +134,9 @@ the classifier's `image_prompt` rather than the raw message, so follow-ups like 
 
 ### 3.7 The store, the miss log and learning (R7)
 - **Store:** one SQLite file, `/app/backend/data/router/router.sqlite` (in `${CHAT}/data`, so it survives Up and
-  upgrades; the function runs as root and creates it, O8). Valve `STORE_PATH`. Tables: `voice_chats` (chat id, on since), `voice_messages` (message ids to voice,
+  upgrades; the function runs as root and creates it, O8). Valve `STORE_PATH`. Tables: `turns` (each chat's last
+  turn: its text, message id and the formats it used, kept a day, so a correction or a thumbs-down can be checked
+  against what actually happened), `voice_chats` (chat id, on since), `voice_messages` (message ids to voice,
   dropped after a day), `detections`. Old rows go when the Router writes to their table (§3.8).
 - **What counts as a miss:**
 
@@ -157,7 +159,9 @@ the classifier's `image_prompt` rather than the raw message, so follow-ups like 
   user's), deletes one, or clears a user's or all. The runbook has the commands.
 
 ### 3.8 Keeping `router.py` small
-The file grows from about 520 lines to an estimated 830 (950 before these rules, D14):
+The file was estimated to grow from about 520 lines to 830 (950 before these rules, D14). **After phase 2 it is
+888**, mostly the classifier's prompt and schema (about 75 lines) and the store (about 100); the tools (phase 3)
+will take it past 1,000. The rules still apply:
 - **One `_complete()`** for every short call that returns text rather than a streamed reply: titles and tags, and
   the classifier. The privacy order lives there once; titles keep today's single call that allows logging
   providers. (The `web_search` tool needs no call of its own: OpenRouter runs it, D10.)
@@ -204,9 +208,9 @@ into `main` once phase 7 passes.
 |---|---|---|---|
 | 0 | **Plan** | This file and the [index](README.md) entry | Done |
 | 1 | **Spike: O1–O8** on the laptop | Findings in §4; the design adjusted where needed | Done (§4; D10 changed, D15 and D16 added) |
-| 2 | **Classifier and store** | `router.py`: `CLASSIFIER_MODEL`, the classifier with seed examples, the store, the miss log and learned examples, the footer label; the spike's labelled set in `tests/` and `tools/eval_classifier.py`; tests | Not started |
-| 3 | **Tools** | `router.py`: tool-capable batches, `TOOL_MODELS`, the tool loop, `run_python` through the browser, caps; tests with a fake HTTP layer | Not started |
-| 4 | **Voice** | `voice_note.py` without the toggle, reading the store; voice mode on/off/once; tests | Not started |
+| 2 | **Classifier and store** | `router.py`: `CLASSIFIER_MODEL`, the classifier with seed examples, the store, the miss log (corrections, thumbs-down) and learned examples, voice mode on and off, the footer label, one shared connection (D17); the spike's labelled set in `tests/` and `tools/eval_classifier.py`; tests | Done: 74 offline tests; the eval scored 43/43 twice, 0.7 s median |
+| 3 | **Tools** | `router.py`: tool-capable batches, `TOOL_MODELS`, the tool loop, `run_python` through the browser, caps, misses from tool calls; tests with a fake HTTP layer | Not started |
+| 4 | **Voice** | `voice_note.py` without the toggle, reading the store; the Router's per-reply marks (`once`, or voice mode on); tests | Not started |
 | 5 | **Toggles out** | Delete `web_search.py` and `image_mode.py`; retired ids in `load_functions.py`; `ENABLE_CODE_INTERPRETER=false`; `deploy/detections.py`; tests | Not started |
 | 6 | **Docs** | `deploy/README.md` (the one-time Code Interpreter switch, checks, the `detections.py` commands, a troubleshooting row), `ENVIRONMENT.md` (new valves, the store), "superseded by CR-4" notes on CR-1 §3.1 (web toggle), §3.2, §3.4 and D7 | Not started |
 | 7 | **Local stack check** | §6 against a stack from the working tree, and a stack upgraded from the current `stable` | Not started |
@@ -245,3 +249,4 @@ into `main` once phase 7 passes.
 | D14 | `router.py` stays small through shared helpers, clean-up on write and one-line seed examples (§3.8) | Owner's choice, to keep the single-file function readable (it must be one file, CLAUDE.md). Behaviour doesn't change. Considered and kept: the thumbs-down signal (O7) and the `voice_reply` tool |
 | D15 | The classifier runs on `deepseek/deepseek-v4.1-flash`, in its own valve `CLASSIFIER_MODEL`; titles and tags stay on `TASK_MODEL` (qwen3.7-flash) | Owner's choice (O5). Every reply waits for it, and it was the fastest (0.6 s median against Qwen's 0.95 s), with a strict JSON schema, so every field is always there. Accuracy was within one message of Qwen and GLM. It costs about 3× Qwen, about $0.15 per 3,000 turns. Rejected: qwen3.7-flash (no new valve and cheapest, but slower, plain JSON only and loose with the voice field) and glm-5.3-flash (43/43, but 2–2.8 s in slow cases) |
 | D16 | The Router reads the classifier with care: the voice mode the chat is already in counts as `none`; `corrects_previous` is ignored without a previous turn; a correction is recorded only when it differs from what the previous turn used | O5: Qwen answered `off` when voice was already off, and DeepSeek once marked a first message as a correction. Without these, a false miss would become a learned example |
+| D17 | The Router keeps one HTTP client open and reuses it, instead of a new one per call | Found in phase 2: the first eval took 1.6 s median against the spike's 0.6 s, and a new connection per call was the whole difference (about 0.7 s each). The classifier would have paid it before every answer, and every chat reply was already paying it before CR-4. The client is made again when the event loop, the transport (tests) or `TIMEOUT_SECONDS` changes |

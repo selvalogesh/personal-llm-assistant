@@ -85,15 +85,24 @@ class Asker:
         return answer
 
 
-class FakeOpenRouter:
-    """Answers each chat request from a queue of (status, body) and records every request payload."""
+def intent(cost=0.0, **fields) -> tuple:
+    """The classifier's streamed answer: plain chat with `fields` changed."""
+    answer = {"image": False, "image_prompt": "", "web": False, "code": False, "voice": "none", "corrects_previous": None}
+    return 200, sse(delta(json.dumps({**answer, **fields})), usage(tokens=0, cost=cost))
 
-    def __init__(self, responses=None, models=None, images=None):
+
+class FakeOpenRouter:
+    """Answers each chat request from a queue of (status, body) and records every request payload. The classifier's
+    calls (they carry `response_format`) are answered from `intents` instead, plain chat when it runs out."""
+
+    def __init__(self, responses=None, models=None, images=None, intents=None):
         self.responses = list(responses or [])
         self.models = models or []
         self.images = list(images or [])
+        self.intents = list(intents or [])
         self.requests: list[dict] = []
         self.image_requests: list[dict] = []
+        self.classify_requests: list[dict] = []
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("/models"):
@@ -103,8 +112,12 @@ class FakeOpenRouter:
             self.image_requests.append(payload)
             status, body = self.images.pop(0)
             return httpx.Response(status, json=body)
-        self.requests.append(payload)
-        status, body = self.responses.pop(0) if self.responses else (429, {"error": {"message": "busy"}})
+        if "response_format" in payload:
+            self.classify_requests.append(payload)
+            status, body = self.intents.pop(0) if self.intents else intent()
+        else:
+            self.requests.append(payload)
+            status, body = self.responses.pop(0) if self.responses else (429, {"error": {"message": "busy"}})
         if isinstance(body, Slow):
             return httpx.Response(status, stream=body, headers={"content-type": "text/event-stream"})
         if isinstance(body, bytes):
