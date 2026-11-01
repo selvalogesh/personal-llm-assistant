@@ -12,6 +12,7 @@ import os
 import re
 import sqlite3
 import time
+import uuid
 from contextlib import asynccontextmanager, contextmanager
 from typing import AsyncGenerator, Optional
 
@@ -97,6 +98,45 @@ TEXT_LIMIT = 300  # characters of a message the store keeps, and that go back to
 MESSAGE_LIMIT = 2000  # characters of a long message the classifier sees: its start and its end
 TURN_SECONDS = 86400  # a chat's last turn, kept to compare with a correction
 MISS_SECONDS = 90 * 86400
+
+# ---------- tools for models that take them (CR-4 §3.3) ----------
+
+
+def function_tool(name: str, description: str, properties: dict) -> dict:
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": description,
+            "parameters": {"type": "object", "properties": properties, "required": list(properties)},
+        },
+    }
+
+
+TOOLS = {
+    "generate_image": function_tool(
+        "generate_image",
+        "Create a picture and show it to the user. Only when the user wants an image made.",
+        {"prompt": {"type": "string", "description": "A complete, standalone description of the picture"}},
+    ),
+    "run_python": function_tool(
+        "run_python",
+        "Run Python in the user's browser (Pyodide, with numpy and matplotlib; nothing can be installed) and get what "
+        "it prints. For exact calculations, data and charts; show a chart with plt.show().",
+        {"code": {"type": "string"}},
+    ),
+    "voice_reply": function_tool(
+        "voice_reply",
+        "Also send replies as voice notes: once (this reply), on (every reply in this chat from now on) or off (stop).",
+        {"mode": {"type": "string", "enum": ["once", "on", "off"]}},
+    ),
+}
+TOOL_LIMITS = {"generate_image": 1, "run_python": 3, "voice_reply": 1}  # per reply
+TOOL_LABELS = {"generate_image": "image", "run_python": "code", "voice_reply": "voice"}
+WEB_TOOL_USES = 2  # OpenRouter's max_uses; it ran one more than asked (CR-4 O6)
+CODE_NOTE = "This request needs code to run: use the run_python tool, then answer from what it prints."
+DATA_IMAGE = re.compile(r"data:image/[\w.+-]+;base64,[A-Za-z0-9+/=]+")  # a chart in Pyodide's output (CR-4 O2)
+OUTPUT_LIMIT = 4000  # characters of a tool's output shown or sent back
 
 CHAINS = {
     # id: (picker name, valve holding the comma-separated chain)
@@ -193,6 +233,13 @@ def previous_turn(messages: list) -> tuple[str, bool]:
         return "", False
     replies = [m for m in messages[users[-2] + 1 : users[-1]] if m.get("role") == "assistant"]
     return message_text(messages[users[-2]]).strip(), any("![" in message_text(m) for m in replies)
+
+
+def with_note(messages: list, note: str) -> list:
+    """The messages with `note` added to the system message (one is made when there's none)."""
+    if messages and messages[0].get("role") == "system" and isinstance(messages[0].get("content"), str):
+        return [{**messages[0], "content": f"{messages[0]['content']}\n\n{note}"}, *messages[1:]]
+    return [{"role": "system", "content": note}, *messages]
 
 
 def excerpt(text: str, limit: int) -> str:
@@ -350,6 +397,13 @@ class Pipe:
             default="recraft/recraft-v4.1-flash, bytedance-seed/seedream-5-0-flash, qwen/qwen-image-2.1-turbo",
             description="Image generation, cheapest first",
         )
+        TOOL_MODELS: str = Field(
+            default="deepseek/deepseek-v4.1-flash, qwen/qwen3.7-flash, google/gemma-4-31b-it:free",
+            description="Used to run code when no model in the chosen chain takes tools (CR-4 §3.4)",
+        )
+        MAX_TOOL_ROUNDS: int = Field(
+            default=3, description="Tool calls a model may make in one reply before it must answer in words"
+        )
         TASK_MODEL: str = Field(
             default="qwen/qwen3.7-flash",
             description="Titles, tags and follow-up suggestions",
@@ -380,8 +434,8 @@ class Pipe:
     def __init__(self):
         self.valves = self.Valves()
         self.transport: Optional[httpx.AsyncBaseTransport] = None  # tests inject a mock transport
-        self._vision_ids: set[str] = set()
-        self._vision_fetched_at = 0.0
+        self._model_caps: dict[str, set[str]] = {}
+        self._caps_fetched_at = 0.0
         self._store: Optional[Store] = None
         self._http: Optional[httpx.AsyncClient] = None
         self._http_key: Optional[tuple] = None
@@ -417,10 +471,25 @@ class Pipe:
 
         image_flag = bool(body.pop(IMAGE_FLAG, False))
         web_flag = bool(body.pop(WEB_FLAG, False))
-        intent = await self._decide(body, key, user_id, __metadata__ or {}, image_flag, web_flag)
+        metadata = __metadata__ or {}
+        intent = await self._decide(body, key, user_id, metadata, image_flag, web_flag)
+        turn = {
+            "key": key,
+            "user_id": user_id,
+            "user": __user__ or {},
+            "metadata": metadata,
+            "request": __request__,
+            "emitter": __event_emitter__,
+            "ask": __event_call__,
+            "intent": intent,
+            "text": last_user_text(body.get("messages", [])).strip(),
+            "used": {},  # what the model's tools did: label → True, or the voice mode
+            "calls": {},  # tool name → times run
+            "cost": 0.0,  # the tools' own cost (images)
+        }
         if intent["image"]:
-            return self._image(body, key, user_id, intent, __event_emitter__, __request__, __metadata__, __user__)
-        return self._chat(body, chain_id, key, user_id, intent, __event_emitter__, __event_call__)
+            return self._image(body, turn)
+        return self._chat(body, chain_id, turn)
 
     # ---------- the turn's formats (CR-4 §3.1, §3.7) ----------
 
@@ -448,6 +517,7 @@ class Pipe:
             "web": intent["web"] or web_flag,
             "formats": format_names(intent),
             "cost": cost,
+            "voice_on": voice_on,
         }
         if chat_id:
             await self._record(chat_id, user_id, metadata.get("message_id") or "", text, intent)
@@ -528,31 +598,40 @@ class Pipe:
 
     # ---------- chat ----------
 
-    async def _chat(self, body, chain_id, key, user_id, intent, emitter, ask=None) -> AsyncGenerator[str, None]:
+    async def _chat(self, body, chain_id, turn) -> AsyncGenerator[str, None]:
         messages = body.get("messages", [])
-        models = split_models(getattr(self.valves, CHAINS[chain_id][1]))
-        if has_images(messages):
-            models = await self._vision_chain(models)
+        code = turn["intent"]["code"] and turn["ask"] is not None  # code runs in the user's browser (CR-4 §3.4)
 
+        async def suited(models: list[str]) -> list[str]:
+            if has_images(messages):
+                models = await self._capable(models, "vision", self.valves.VISION_MODELS)
+            if code:
+                models = await self._capable(models, "tools", self.valves.TOOL_MODELS)
+            return models
+
+        if code:
+            body = {**body, "messages": with_note(messages, CODE_NOTE)}
         # Paid chain first, then the free chain as the last resort (R5); skip the repeat when they're the same.
-        plan = [("chain", models)]
-        free = split_models(self.valves.FREE_MODELS)
+        plan = [("chain", await suited(split_models(getattr(self.valves, CHAINS[chain_id][1]))))]
         if chain_id != "free":
-            plan.append(("free", await self._vision_chain(free) if has_images(messages) else free))
+            plan.append(("free", await suited(split_models(self.valves.FREE_MODELS))))
 
         last_error: Optional[RouteError] = None
         for label, chain in plan:
             for batch in batches(chain):
                 for data_collection in ("deny", "allow"):
-                    payload = self._payload(body, batch, user_id, data_collection, intent["web"])
+                    tools = await self._tools(batch, turn)
+                    payload = self._payload(body, batch, turn["user_id"], data_collection, turn["intent"]["web"], tools)
                     started = False
                     try:
-                        async for piece, info in self._attempt(payload, key, ask):
-                            if piece:
-                                started = True
-                                yield piece
-                            elif info is not None:
-                                await self._footer(emitter, info, label, data_collection, intent)
+                        async for piece, info in self._answer(payload, turn):
+                            if piece is not None:
+                                started = True  # "" when tools ran: their effects can't be undone by starting over
+                                if piece:
+                                    yield piece
+                            else:
+                                await self._footer(info, label, data_collection, turn)
+                                self._settle(turn)
                                 if info["stopped"]:
                                     yield f"\n\n_{FRIENDLY['stopped'].format(minutes=minutes(info['stopped']))}_"
                                 elif info["finish_reason"] == "length":
@@ -578,7 +657,7 @@ class Pipe:
                 break  # credits or budget: skip the rest of this chain
         yield FRIENDLY.get(last_error.kind if last_error else "other", FRIENDLY["other"])
 
-    def _payload(self, body, models, user_id, data_collection, web) -> dict:
+    def _payload(self, body, models, user_id, data_collection, web, tools=None) -> dict:
         payload = {
             "models": models,
             "messages": body.get("messages", []),
@@ -597,7 +676,166 @@ class Pipe:
             payload["plugins"] = [
                 {"id": "web", "engine": self.valves.WEB_ENGINE, "max_results": self.valves.WEB_MAX_RESULTS}
             ]
+        if tools:
+            payload["tools"] = tools
         return payload
+
+    async def _answer(self, payload: dict, turn: dict):
+        """_attempt, then the tool rounds: the tools the model asked for run, and the model that answered goes on with
+        their results, up to MAX_TOOL_ROUNDS (CR-4 §3.3). Yields (text, None), ("", None) once tools have run, then
+        (None, info) with the tokens and cost of every round."""
+        tokens, cost, searches = 0, 0.0, 0
+        for number in range(self.valves.MAX_TOOL_ROUNDS + 1):
+            said, info = [], None
+            rounds = self._attempt if number == 0 else self._stream
+            async for piece, got in rounds(payload, turn["key"], turn["ask"]):
+                if piece:
+                    said.append(piece)
+                    yield piece, None
+                elif got is not None:
+                    info = got
+            tokens, cost, searches = tokens + info["tokens"], cost + info["cost"], searches + info["searches"]
+            if not info["tool_calls"] or info["stopped"]:
+                break
+            results = []
+            for call in info["tool_calls"]:
+                result, shown = await self._run_tool(call, turn)
+                if shown:
+                    yield shown, None
+                results.append({"role": "tool", "tool_call_id": call["id"], "content": result})
+            yield "", None
+            asked = {
+                "role": "assistant",
+                "content": "".join(said).split("</think>")[-1].strip(),
+                "tool_calls": [
+                    {"id": c["id"], "type": "function", "function": {"name": c["name"], "arguments": c["arguments"]}}
+                    for c in info["tool_calls"]
+                ],
+            }
+            payload = {
+                **payload,
+                "models": [info["model"] or payload["models"][0]],
+                "messages": [*payload["messages"], asked, *results],
+            }
+            if number + 1 == self.valves.MAX_TOOL_ROUNDS:
+                payload["tool_choice"] = "none"  # the last round answers in words
+        if searches:
+            turn["used"]["web"] = True
+        yield None, {**info, "tokens": tokens, "cost": cost}
+
+    async def _tools(self, batch: list[str], turn: dict) -> list:
+        """The tools for a batch: only when every model in it takes them (CR-4 D6), less what the classifier already
+        chose for this turn."""
+        tool_models = await self._model_ids("tools")
+        if not batch or not all(model in tool_models for model in batch):
+            return []
+        intent, tools = turn["intent"], [TOOLS["generate_image"]]
+        if not intent["web"]:
+            engine = self.valves.WEB_ENGINE
+            parameters = {"engine": engine, "max_results": self.valves.WEB_MAX_RESULTS, "max_uses": WEB_TOOL_USES}
+            if engine in ("parallel", "exa"):
+                parameters["mode"] = "fast"  # $0.001 a search with parallel (CR-4 O6)
+            tools.append({"type": "openrouter:web_search", "parameters": parameters})
+        if turn["ask"]:
+            tools.append(TOOLS["run_python"])
+        if intent["voice"] == "none" and not intent["voice_on"]:
+            tools.append(TOOLS["voice_reply"])
+        return tools
+
+    async def _run_tool(self, call: dict, turn: dict) -> tuple[str, str]:
+        """One tool call: what goes back to the model, and what the user sees in the reply."""
+        name = call["name"]
+        if name not in TOOLS:
+            return f"There is no tool called {name}.", ""
+        if turn["calls"].get(name, 0) >= TOOL_LIMITS[name]:
+            return f"{name} can't be used again in this reply. Answer with what you have.", ""
+        turn["calls"][name] = turn["calls"].get(name, 0) + 1
+        try:
+            args = json.loads(call["arguments"] or "{}")
+        except json.JSONDecodeError:
+            return "The arguments weren't valid JSON.", ""
+        if name == "generate_image":
+            return await self._tool_image(str(args.get("prompt") or "").strip(), turn)
+        if name == "run_python":
+            return await self._tool_python(str(args.get("code") or ""), turn)
+        mode = args.get("mode") if args.get("mode") in ("once", "on", "off") else "once"
+        turn["used"]["voice"] = mode
+        self._voice(turn, mode)
+        return {
+            "once": "This reply will also arrive as a voice note.",
+            "on": "From now on every reply in this chat also arrives as a voice note.",
+            "off": "Voice notes are off for this chat.",
+        }[mode], ""
+
+    async def _tool_image(self, prompt: str, turn: dict) -> tuple[str, str]:
+        if not prompt:
+            return "Give the picture's description in `prompt`.", ""
+        turn["used"]["image"] = True
+        await self._status(turn, "Making the image…")
+        try:
+            markdown, _, cost = await self._make_image(prompt, turn)
+        except RouteError as e:
+            return f"The image couldn't be made: {FRIENDLY.get(e.kind, FRIENDLY['other'])}", ""
+        turn["cost"] += cost
+        return "The image is now shown to the user above your next words; don't repeat its link.", f"\n\n{markdown}\n\n"
+
+    async def _tool_python(self, code: str, turn: dict) -> tuple[str, str]:
+        """Runs the code with Pyodide in the user's browser, as Open WebUI's interpreter does (CR-4 §3.4, O2)."""
+        turn["used"]["code"] = True
+        if not turn["ask"]:
+            return "Code can't run in this chat. Answer without running it.", ""
+        await self._status(turn, "Running the code…")
+        metadata = turn["metadata"]
+        event = {
+            "type": "execute:python",
+            "data": {
+                "id": str(uuid.uuid4()),
+                "code": code,
+                "session_id": metadata.get("session_id"),
+                "files": metadata.get("files") or [],
+            },
+        }
+        try:
+            result = await turn["ask"](event)
+        except Exception as e:
+            log.warning("router: running code in the browser failed: %r", e)
+            result = None
+        if not isinstance(result, dict):
+            return "The code couldn't run in the user's browser (it may be closed). Answer without running it.", ""
+        charts, outputs = [], {}
+        for field in ("stdout", "result", "stderr"):
+            value = str(result.get(field) or "")
+            for data_url in DATA_IMAGE.findall(value):
+                charts.append(await self._store_data_url(data_url, turn))
+            value = DATA_IMAGE.sub("[chart shown to the user]", value).strip()
+            outputs[field] = "" if value == "None" else value[:OUTPUT_LIMIT]
+        printed = "\n".join(v for v in (outputs["stdout"], outputs["result"], outputs["stderr"]) if v)
+        shown = f"\n\n<details>\n<summary>Python</summary>\n\n```python\n{code.strip()}\n```\n\n"
+        shown += f"```\n{printed or '(no output)'}\n```\n</details>\n\n"
+        shown += "".join(f"![chart]({url})\n\n" for url in charts)
+        back = "\n".join(f"{field}:\n{value}" for field, value in outputs.items() if value) or "(no output)"
+        return back, shown
+
+    def _voice(self, turn: dict, mode: str) -> None:
+        """Voice mode on or off for the chat."""
+        chat_id = turn["metadata"].get("chat_id")
+        if chat_id and mode in ("on", "off"):
+            self._remember("set_voice", chat_id, mode == "on")
+
+    async def _status(self, turn: dict, description: str) -> None:
+        if turn["emitter"]:
+            await turn["emitter"]({"type": "status", "data": {"description": description, "done": False}})
+
+    def _settle(self, turn: dict) -> None:
+        """After the reply: a format the model chose through a tool, which the classifier didn't, is a miss (CR-4
+        §3.7), and the chat's last turn records what was really used."""
+        chat_id, picked = turn["metadata"].get("chat_id"), labels_of(turn["intent"])
+        used = {**picked, **turn["used"]}
+        if not chat_id or not turn["text"] or used == picked:
+            return
+        message_id = turn["metadata"].get("message_id") or ""
+        self._remember("add_miss", turn["user_id"], chat_id, message_id, turn["text"], used, "tool", True)
+        self._remember("set_last_turn", chat_id, turn["user_id"], message_id, turn["text"], used)
 
     async def _attempt(self, payload: dict, key: str, ask=None):
         """_stream, asked once more with a smaller max_tokens when low credits can't cover the model's full output."""
@@ -622,7 +860,9 @@ class Pipe:
         With `ask` (Open WebUI's __event_call__), a model that has thought for THINKING_LIMIT_SECONDS without answering
         makes a dialog ask the user to keep waiting or stop. The reply keeps streaming while the dialog is open, and it
         closes by itself once the answer starts."""
-        info = {"model": "", "tokens": 0, "cost": 0.0, "finish_reason": None, "answered": False, "stopped": 0.0}
+        info = {"model": "", "tokens": 0, "cost": 0.0, "finish_reason": None, "answered": False, "stopped": 0.0,
+                "tool_calls": [], "searches": 0}
+        calls: dict[int, dict] = {}
         in_reasoning = False
         limit = self.valves.THINKING_LIMIT_SECONDS if ask else 0
         started_at = time.monotonic()
@@ -678,8 +918,18 @@ class Pipe:
                         if usage:
                             info["tokens"] = usage.get("total_tokens", 0)
                             info["cost"] = float(usage.get("cost") or 0)
+                            info["searches"] = (usage.get("server_tool_use_details") or {}).get("web_search_requests", 0)
                         for choice in chunk.get("choices", []):
                             delta = choice.get("delta", {})
+                            for piece in delta.get("tool_calls") or []:  # OpenAI's format, arguments in pieces (CR-4 O4)
+                                call = calls.setdefault(piece.get("index", 0), {"id": "", "name": "", "arguments": ""})
+                                function = piece.get("function") or {}
+                                call["id"] = piece.get("id") or call["id"]
+                                call["name"] = function.get("name") or call["name"]
+                                call["arguments"] += function.get("arguments") or ""
+                                info["answered"] = True  # a model calling a tool isn't stuck thinking
+                                if question:
+                                    question.cancel()
                             reasoning = delta.get("reasoning")
                             if reasoning:
                                 if not in_reasoning:
@@ -704,6 +954,7 @@ class Pipe:
                     task.cancel()
         if in_reasoning:
             yield "\n</think>\n\n", None
+        info["tool_calls"] = [calls[i] for i in sorted(calls)]
         yield None, info
 
     @staticmethod
@@ -731,20 +982,23 @@ class Pipe:
             }
         )
 
-    async def _footer(self, emitter, info, label, data_collection, intent):
-        if not (emitter and self.valves.SHOW_FOOTER):
+    async def _footer(self, info, label, data_collection, turn):
+        if not (turn["emitter"] and self.valves.SHOW_FOOTER):
             return
-        cost = info["cost"] + intent["cost"]  # the classifier's call counts towards the reply
+        intent = turn["intent"]
+        cost = info["cost"] + intent["cost"] + turn["cost"]  # the classifier and the tools count towards the reply
         parts = [info["model"] or "unknown model", f"{info['tokens']:,} tokens", f"${cost:.4f}"]
         if label == "free":
             parts.append("free fallback")
         if data_collection == "allow":
             parts.append("logging provider")
-        if intent["formats"]:
-            parts.append("auto: " + ", ".join(intent["formats"]))
+        tools = {"image": "image", "web": "web search", "code": "code", "voice": "voice"}
+        formats = intent["formats"] + [tools[k] for k in turn["used"] if tools[k] not in intent["formats"]]
+        if formats:
+            parts.append("auto: " + ", ".join(formats))
         elif intent["web"]:
             parts.append("web search")
-        await emitter({"type": "status", "data": {"description": " · ".join(parts), "done": True}})
+        await turn["emitter"]({"type": "status", "data": {"description": " · ".join(parts), "done": True}})
 
     async def _complete(self, payload: dict, key: str, privacy: bool) -> tuple[str, float]:
         """A short call whose whole reply is wanted at once (titles and tags, the classifier): the reply without its
@@ -781,26 +1035,35 @@ class Pipe:
 
     # ---------- image generation ----------
 
-    async def _image(self, body, key, user_id, intent, emitter, request, metadata, user) -> AsyncGenerator[str, None]:
-        prompt = intent["image_prompt"] or last_user_text(body.get("messages", [])).strip()
+    async def _image(self, body, turn) -> AsyncGenerator[str, None]:
+        prompt = turn["intent"]["image_prompt"] or turn["text"]
         if not prompt:
             yield "Describe the image you want in your message."
             return
-        last_error: Optional[RouteError] = None
+        try:
+            markdown, model, cost = await self._make_image(prompt, turn)
+        except RouteError as e:
+            yield FRIENDLY.get(e.kind, FRIENDLY["other"])
+            return
+        yield markdown
+        await self._footer({"model": model, "tokens": 0, "cost": cost}, "chain", "n/a", turn)
+
+    async def _make_image(self, prompt: str, turn: dict) -> tuple[str, str, float]:
+        """IMAGE_MODELS, cheapest first, for image turns and the generate_image tool (CR-4 §3.8): the image as
+        markdown, stored as an Open WebUI file, with the model that made it and its cost."""
+        last_error = RouteError("other")
         for model in split_models(self.valves.IMAGE_MODELS):
             try:
-                image, cost = await self._generate_image(model, prompt, key, user_id)
+                image, cost = await self._generate_image(model, prompt, turn["key"], turn["user_id"])
             except RouteError as e:
                 last_error = e
                 log.warning("router: image model %s: %s", model, e)
                 if e.kind in ("auth", "credits", "budget"):
                     break
                 continue
-            url = await self._store_image(image, request, metadata, user)
-            yield f"![{alt_text(prompt)}]({url})"
-            await self._footer(emitter, {"model": model, "tokens": 0, "cost": cost}, "chain", "n/a", intent)
-            return
-        yield FRIENDLY.get(last_error.kind if last_error else "other", FRIENDLY["other"])
+            data_url = f"data:{image.get('media_type') or 'image/png'};base64,{image['b64_json']}"
+            return f"![{alt_text(prompt)}]({await self._store_data_url(data_url, turn)})", model, cost
+        raise last_error
 
     async def _generate_image(self, model, prompt, key, user_id) -> tuple[dict, float]:
         payload = {"model": model, "prompt": prompt, "n": 1, "aspect_ratio": "1:1", "output_format": "webp"}
@@ -821,44 +1084,44 @@ class Pipe:
             raise RouteError("other", "no image in the response")
         return images[0], float((result.get("usage") or {}).get("cost") or 0)
 
-    async def _store_image(self, image: dict, request, metadata, user) -> str:
-        data_url = f"data:{image.get('media_type') or 'image/png'};base64,{image['b64_json']}"
+    async def _store_data_url(self, data_url: str, turn: dict) -> str:
         try:
             # Store it as an Open WebUI file, so the chat keeps a link instead of megabytes of base64.
             from open_webui.models.users import Users
             from open_webui.utils.files import get_image_url_from_base64
 
-            user_model = await Users.get_user_by_id(user["id"])
-            return await get_image_url_from_base64(request, data_url, metadata or {}, user_model) or data_url
+            user_model = await Users.get_user_by_id(turn["user"]["id"])
+            return await get_image_url_from_base64(turn["request"], data_url, turn["metadata"], user_model) or data_url
         except Exception as e:  # outside Open WebUI (tests) or an API change: the data URL still works
             log.warning("router: storing the image as a file failed, keeping it inline: %s", e)
             return data_url
 
     # ---------- helpers ----------
 
-    async def _vision_chain(self, models: list[str]) -> list[str]:
-        vision = await self._vision_model_ids()
-        if not vision:
+    async def _capable(self, models: list[str], capability: str, fallback: str) -> list[str]:
+        """The models that take images ("vision") or tools ("tools"), else those in the `fallback` list that do."""
+        able = await self._model_ids(capability)
+        if not able:
             return models  # couldn't check: let OpenRouter decide
-        chosen = [m for m in models if m in vision]
-        return chosen or [m for m in split_models(self.valves.VISION_MODELS) if m in vision] or models
+        chosen = [m for m in models if m in able]
+        return chosen or [m for m in split_models(fallback) if m in able] or models
 
-    async def _vision_model_ids(self) -> set[str]:
-        if self._vision_ids and time.time() - self._vision_fetched_at < 3600:
-            return self._vision_ids
-        try:
-            async with self._client() as client:
-                response = await client.get(f"{self.valves.API_BASE_URL}/models")
-            response.raise_for_status()
-            self._vision_ids = {
-                m["id"]
-                for m in response.json().get("data", [])
-                if "image" in (m.get("architecture") or {}).get("input_modalities", [])
-            }
-            self._vision_fetched_at = time.time()
-        except Exception as e:
-            log.warning("router: model list unavailable: %s", e)
-        return self._vision_ids
+    async def _model_ids(self, capability: str) -> set[str]:
+        """OpenRouter's models that take images ("vision") or tool calls ("tools"), fetched at most hourly."""
+        if not self._model_caps or time.time() - self._caps_fetched_at >= 3600:
+            try:
+                async with self._client() as client:
+                    response = await client.get(f"{self.valves.API_BASE_URL}/models")
+                response.raise_for_status()
+                models = response.json().get("data", [])
+                self._model_caps = {
+                    "vision": {m["id"] for m in models if "image" in (m.get("architecture") or {}).get("input_modalities", [])},
+                    "tools": {m["id"] for m in models if "tools" in (m.get("supported_parameters") or [])},
+                }
+                self._caps_fetched_at = time.time()
+            except Exception as e:
+                log.warning("router: model list unavailable: %s", e)
+        return self._model_caps.get(capability, set())
 
     def _read_key(self) -> str:
         try:

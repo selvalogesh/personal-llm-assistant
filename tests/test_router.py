@@ -4,7 +4,9 @@ import sqlite3
 import sys
 import types
 
-from conftest import ROOT, Asker, Emitter, FakeOpenRouter, Slow, collect, delta, intent, load, run, sse, usage
+from conftest import (
+    ROOT, Asker, Emitter, FakeOpenRouter, Slow, collect, delta, intent, load, run, sse, tool_call, usage,
+)
 
 router = load("functions/router.py")
 
@@ -494,6 +496,151 @@ def test_a_broken_store_never_stops_a_reply(key_file, tmp_path):
     fake = FakeOpenRouter([OK], intents=[intent(voice="on")])
     pipe = make_pipe(fake, key_file, STORE_PATH=str(blocked / "router.sqlite"))
     assert turn(pipe, "voice notes from now on", "r1") == "Hello there"
+
+
+# ---------- tools (CR-4 §3.3, §3.4) ----------
+
+TOOLY = [{"id": "vendor/model", "supported_parameters": ["tools"]}]
+
+
+def tool_pipe(fake, key_file, **valves):
+    return make_pipe(fake, key_file, AUTO_MODELS="vendor/model", FREE_MODELS="f1", **valves)
+
+
+def offered(payload) -> list[str]:
+    return [t.get("function", {}).get("name") or t["type"] for t in payload.get("tools", [])]
+
+
+class Browser:
+    """Open WebUI's __event_call__ for execute:python: answers with `result`, or raises it."""
+
+    def __init__(self, result):
+        self.result, self.events = result, []
+
+    async def __call__(self, event):
+        self.events.append(event)
+        if isinstance(self.result, Exception):
+            raise self.result
+        return self.result
+
+
+def test_tools_only_when_every_model_in_the_batch_takes_them(key_file):
+    models = [{"id": "a", "supported_parameters": ["tools"]}, {"id": "b", "supported_parameters": []}]
+    fake = FakeOpenRouter([OK, OK], models=models)
+    chat(make_pipe(fake, key_file, AUTO_MODELS="a, b"))
+    chat(make_pipe(fake, key_file, AUTO_MODELS="a"), ask=Browser({}))
+    assert "tools" not in fake.requests[0]  # a mixed batch would quietly drop b (CR-4 D6, O4)
+    assert offered(fake.requests[1]) == ["generate_image", "openrouter:web_search", "run_python", "voice_reply"]
+    web = fake.requests[1]["tools"][1]["parameters"]
+    assert web == {"engine": "parallel", "max_results": 3, "max_uses": 2, "mode": "fast"}
+
+
+def test_tools_the_classifier_chose_are_not_offered_again(key_file):
+    fake = FakeOpenRouter([OK], models=TOOLY, intents=[intent(web=True, voice="once")])
+    chat(tool_pipe(fake, key_file))
+    assert offered(fake.requests[0]) == ["generate_image"]  # no browser: no run_python either
+    assert "plugins" in fake.requests[0]
+
+
+def test_generate_image_tool_shows_the_image_and_the_model_goes_on(key_file):
+    first = (200, sse(delta(reasoning="They want a picture."), tool_call("generate_image", {"prompt": "a lighthouse"}),
+                      usage(cost=0.001)))
+    fake = FakeOpenRouter([first, (200, sse(delta("Here it is."), usage()))], models=TOOLY, images=[IMAGE_OK])
+    emitter = Emitter()
+    pipe = tool_pipe(fake, key_file)
+    text = turn(pipe, "can you sketch me a lighthouse?", "r1", emitter=emitter)
+    assert f"\n\n![a lighthouse](data:image/webp;base64,{PNG})\n\n" in text and text.endswith("Here it is.")
+    follow = fake.requests[1]
+    assert follow["models"] == ["vendor/model"]  # the model that answered, not the whole batch
+    asked, result = follow["messages"][-2:]
+    assert asked["role"] == "assistant" and asked["content"] == ""
+    assert asked["tool_calls"][0]["function"] == {"name": "generate_image", "arguments": '{"prompt": "a lighthouse"}'}
+    assert result["role"] == "tool" and result["tool_call_id"] == "call-1"
+    assert emitter.statuses() == ["Making the image…", "vendor/model · 84 tokens · $0.0092 · auto: image"]
+    labels = {**PLAIN_LABELS, "image": True}  # the classifier said chat: a miss it learns from
+    assert misses(pipe) == [("user-1", "can you sketch me a lighthouse?", json.dumps(labels), "tool", 1)]
+
+
+def test_run_python_tool_runs_in_the_browser_and_shows_code_output_and_chart(key_file):
+    code = "import matplotlib.pyplot as plt\nplt.plot([1, 2])\nplt.show()\nprint(6 * 7)"
+    first = (200, sse(tool_call("run_python", {"code": code}), usage()))
+    fake = FakeOpenRouter([first, (200, sse(delta("It's 42."), usage()))], models=TOOLY,
+                          intents=[intent(code=True)])
+    browser = Browser({"stdout": "data:image/png;base64,iVBORw0KGgo=\n42", "stderr": "", "result": "None"})
+    text = turn(tool_pipe(fake, key_file), "plot it and multiply", "r1", ask=browser)
+    event = browser.events[0]
+    assert event["type"] == "execute:python" and event["data"]["code"] == code
+    assert "<details>\n<summary>Python</summary>" in text and "```python\nimport matplotlib" in text
+    assert "```\n[chart shown to the user]\n42\n```" in text
+    assert "![chart](data:image/png;base64,iVBORw0KGgo=)" in text and text.endswith("It's 42.")
+    assert fake.requests[1]["messages"][-1]["content"] == "stdout:\n[chart shown to the user]\n42"
+
+
+def test_code_turn_uses_tool_models_and_says_to_run_code(key_file):
+    models = [{"id": "t1", "supported_parameters": ["tools"]}, {"id": "plain"}]
+    fake = FakeOpenRouter([OK], models=models, intents=[intent(code=True)])
+    pipe = make_pipe(fake, key_file, AUTO_MODELS="plain", TOOL_MODELS="t1")
+    chat(pipe, content="chart my savings", ask=Browser({}))
+    payload = fake.requests[0]
+    assert payload["models"] == ["t1"] and "run_python" in offered(payload)
+    assert payload["messages"][0] == {"role": "system", "content": router.CODE_NOTE}
+
+
+def test_browser_that_cant_run_code_is_told_to_the_model(key_file):
+    first = (200, sse(tool_call("run_python", {"code": "print(1)"}), usage()))
+    fake = FakeOpenRouter([first, OK], models=TOOLY)
+    text = chat(tool_pipe(fake, key_file), ask=Browser(TimeoutError("tab closed")))
+    assert "<details>" not in text and text.endswith("Hello there")
+    assert "couldn't run in the user's browser" in fake.requests[1]["messages"][-1]["content"]
+
+
+def test_a_tool_is_capped_per_reply(key_file):
+    again = lambda n: (200, sse(tool_call("generate_image", {"prompt": "a cat"}, call_id=f"c{n}"), usage()))
+    fake = FakeOpenRouter([again(1), again(2), OK], models=TOOLY, images=[IMAGE_OK])
+    chat(tool_pipe(fake, key_file))
+    assert len(fake.image_requests) == 1
+    assert "can't be used again" in fake.requests[2]["messages"][-1]["content"]
+
+
+def test_last_tool_round_must_answer_in_words(key_file):
+    loop = lambda n: (200, sse(tool_call("voice_reply", {"mode": "once"}, call_id=f"c{n}"), usage()))
+    fake = FakeOpenRouter([loop(1), loop(2), loop(3), OK], models=TOOLY)
+    chat(tool_pipe(fake, key_file, MAX_TOOL_ROUNDS=3))
+    assert len(fake.requests) == 4  # three rounds of tool calls, then the answer
+    assert [r.get("tool_choice") for r in fake.requests] == [None, None, None, "none"]
+
+
+def test_voice_reply_tool_turns_voice_mode_on(key_file):
+    first = (200, sse(tool_call("voice_reply", {"mode": "on"}), usage()))
+    fake = FakeOpenRouter([first, OK], models=TOOLY)
+    pipe = tool_pipe(fake, key_file)
+    turn(pipe, "talk to me from now on", "r1")
+    assert pipe._remember("voice_on", "chat-1") is True
+    assert "every reply in this chat" in fake.requests[1]["messages"][-1]["content"]
+
+
+def test_openrouters_web_search_counts_as_web(key_file):
+    fake = FakeOpenRouter([(200, sse(delta("It rained."), usage(searches=2)))], models=TOOLY)
+    emitter = Emitter()
+    pipe = tool_pipe(fake, key_file)
+    turn(pipe, "did it rain in Chennai?", "r1", emitter=emitter)
+    assert emitter.statuses()[-1].endswith("auto: web search")
+    assert misses(pipe)[0][2] == json.dumps({**PLAIN_LABELS, "web": True})
+
+
+def test_failure_after_a_tool_ran_doesnt_start_over(key_file):
+    first = (200, sse(tool_call("generate_image", {"prompt": "a cat"}), usage()))
+    fake = FakeOpenRouter([first, (500, {"error": {"message": "down"}})], models=TOOLY, images=[IMAGE_OK])
+    text = chat(tool_pipe(fake, key_file))
+    assert text.count("![a cat]") == 1 and text.endswith(f"_{router.FRIENDLY['other']}_")
+    assert len(fake.requests) == 2 and len(fake.image_requests) == 1
+
+
+def test_unknown_tool_is_answered_not_run(key_file):
+    first = (200, sse(tool_call("delete_everything", {}), usage()))
+    fake = FakeOpenRouter([first, OK], models=TOOLY)
+    chat(tool_pipe(fake, key_file))
+    assert fake.requests[1]["messages"][-1]["content"] == "There is no tool called delete_everything."
 
 
 def test_labelled_set_is_well_formed_and_apart_from_the_seed_examples():

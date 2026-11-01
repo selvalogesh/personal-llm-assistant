@@ -48,8 +48,17 @@ def delta(content=None, reasoning=None, model="vendor/model", finish=None) -> di
     return {"model": model, "choices": [{"delta": d, "finish_reason": finish}]}
 
 
-def usage(model="vendor/model", tokens=42, cost=0.0012) -> dict:
-    return {"model": model, "choices": [], "usage": {"total_tokens": tokens, "cost": cost}}
+def usage(model="vendor/model", tokens=42, cost=0.0012, searches=0) -> dict:
+    counts = {"total_tokens": tokens, "cost": cost}
+    if searches:
+        counts["server_tool_use_details"] = {"web_search_requests": searches}
+    return {"model": model, "choices": [], "usage": counts}
+
+
+def tool_call(name, args, call_id="call-1", index=0, model="vendor/model") -> dict:
+    """A tool call as OpenRouter streams it, ending the reply with finish_reason "tool_calls" (CR-4 O4)."""
+    piece = {"index": index, "id": call_id, "type": "function", "function": {"name": name, "arguments": json.dumps(args)}}
+    return {"model": model, "choices": [{"delta": {"tool_calls": [piece]}, "finish_reason": "tool_calls"}]}
 
 
 class Slow(httpx.AsyncByteStream):
