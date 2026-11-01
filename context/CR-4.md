@@ -212,7 +212,7 @@ into `main` once phase 7 passes.
 | 3 | **Tools** | `router.py`: tool-capable batches, `TOOL_MODELS`, the tool loop, `run_python` through the browser, caps, misses from tool calls; tests with a fake HTTP layer | Done: 86 offline tests. Live, the Router ran a code turn through a stand-in browser and answered correctly. A tool round sends back only the calls and their results: DeepSeek, GLM, Qwen, Gemini (streamed) and Sonnet all answered without their reasoning passed back |
 | 4 | **Voice** | `voice_note.py` without the toggle, reading the store; the Router's per-reply marks (`once`, or voice mode on); tests | Done: 91 offline tests, including one where the filter reads the mark the Router wrote |
 | 5 | **Toggles out** | Delete `web_search.py` and `image_mode.py`; retired ids in `load_functions.py`; `ENABLE_CODE_INTERPRETER=false`; `deploy/detections.py`; tests | Done: 99 offline tests; a test checks no function is a toggle |
-| 6 | **Docs** | `deploy/README.md` (the one-time Code Interpreter switch, checks, the `detections.py` commands, a troubleshooting row), `ENVIRONMENT.md` (new valves, the store), "superseded by CR-4" notes on CR-1 §3.1 (web toggle), §3.2, §3.4 and D7 | Not started |
+| 6 | **Docs** | `deploy/README.md` (the one-time Code Interpreter switch, checks, the `detections.py` commands, a troubleshooting row), `ENVIRONMENT.md` (new valves, the store), "superseded by CR-4" notes on CR-1 §3.1 (web toggle), §3.2, §3.4 and D7 | Done, with the root README |
 | 7 | **Local stack check** | §6 against a stack from the working tree, and a stack upgraded from the current `stable` | Not started |
 | 8 | **Server (owner)** | Down, Up after CI moves `stable`, then the one-time switch and the runbook's checks | Not started |
 

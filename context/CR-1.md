@@ -84,10 +84,11 @@ finance already run there.
   group. After the chain, the Free chain gets the same treatment. The footer says when a logging provider or the
   free fallback answered.
 - **Vision (R9):** if a message carries images, the pipe uses the chain's vision-capable models.
-- **Web search (R8):** a toggle in the chat input, the filter [web_search.py](../functions/web_search.py), marks
+- **Web search (R8):** a toggle in the chat input, the filter `web_search.py`, marks
   the turn, and the pipe adds OpenRouter's web plugin with a cheap engine (`parallel`, $0.001–0.005 per search,
   against $0.007 for the default Exa). Open WebUI's own web search stays off: it would need a search engine of
-  its own.
+  its own. **Superseded by [CR-4](CR-4.md):** no toggle; the Router's classifier turns the plugin on, and models
+  that take tools can search with OpenRouter's `web_search` tool.
 - **Titles, tags and follow-ups:** Open WebUI's background tasks go to one cheap model (`TASK_MODEL`,
   `qwen/qwen3.7-flash`), never to the chosen chain.
 - **Out of credits or budget:** the rest of the paid chain is skipped and the Free chain answers.
@@ -107,11 +108,13 @@ finance already run there.
 
 ### 3.2 Images (R9)
 - **Understanding:** vision chains in the pipe (§3.1).
-- **Generating:** a "Create image" toggle in the chat input, the filter [image_mode.py](../functions/image_mode.py).
+- **Generating:** a "Create image" toggle in the chat input, the filter `image_mode.py`.
   With it on, the pipe sends the message to OpenRouter's image API (`/images`) with `IMAGE_MODELS`, cheapest
   first: `recraft/recraft-v4.1-flash` ($0.007), `bytedance-seed/seedream-5-0-flash` ($0.018),
   `qwen/qwen-image-2.1-turbo` ($0.018). The image is stored as an Open WebUI file and shown in the reply. This
   replaced the planned Tool: a toggle is deterministic, while a Tool depends on a model deciding to call it.
+  **Superseded by [CR-4](CR-4.md):** no toggle; the classifier decides image turns (with a prompt written from the
+  chat's context), and the `generate_image` tool backs it up.
 - **Drawn as code:** built into Open WebUI. SVG and HTML in a reply render in the chat, and Python (for example,
   matplotlib) runs in the browser's code runner. No extra cost beyond the chat tokens.
 
@@ -131,7 +134,9 @@ finance already run there.
 - **Voice-note replies:** a "Voice reply" toggle, the filter [voice_note.py](../functions/voice_note.py). After a
   reply finishes, it strips reasoning, code and markdown, sends up to 1,200 characters (about 75 s) to Kokoro
   (`af_heart`, mp3), and attaches a WhatsApp-style player to the message as an Open WebUI embed. The audio is
-  inline (a data URL, about 1 MB a minute), so it plays without another request.
+  inline (a data URL, about 1 MB a minute), so it plays without another request. **Superseded by
+  [CR-4](CR-4.md):** no toggle; the filter voices the replies the Router marks, for one reply or for the rest of
+  the chat.
 
 ### 3.5 Image and startup
 
@@ -258,7 +263,7 @@ phone check in the runbook's "Done when".
 | D4 | Speech-to-text and text-to-speech run locally (Whisper, Kokoro) | Owner's choice (R15): free and private |
 | D5 | Secrets only from read-only files in `/StorageDrive/Chat/secrets` (each file mode 600, holding only its value), never from the stack environment. The same as finance | OMV commits the stack environment to git (finance decision 32). Owner's choice |
 | D6 | Users see only the pipe's options | Predictable cost within $10 shared |
-| D7 | Web search, image generation and voice notes are **toggle filters** that the pipe or the outlet acts on | Deterministic, one click per chat; a Tool depends on a model deciding to call it (spike) |
+| D7 | Web search, image generation and voice notes are **toggle filters** that the pipe or the outlet acts on | Deterministic, one click per chat; a Tool depends on a model deciding to call it (spike). **Superseded by [CR-4](CR-4.md) D1:** a classifier on every turn, with tools as the backup |
 | D8 | The admin is created by Open WebUI from `WEBUI_ADMIN_EMAIL` and the password file; the loader signs in with it; no admin API key | One secret fewer, and nobody can claim admin by signing up first (spike O1) |
 | D9 | Chains go to OpenRouter in groups of three; each group tries non-logging providers, then logging ones, before the next | OpenRouter's `models` limit is 3; free models were rate-limited without the logging pool (spike) |
 | D10 | `BYPASS_MODEL_ACCESS_CONTROL=true` | Pipe models are admin-only otherwise; all users have the same access (R2) |

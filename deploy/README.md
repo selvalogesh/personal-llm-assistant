@@ -11,7 +11,8 @@ openai.selvalogesh.com ─▶ your proxy / tunnel ─▶ host :CHAT_UI_PORT ─�
 /StorageDrive/Chat/            (CHAT in OMV's global.env)
 ├── app/       our files at the deployed commit (init replaces them on every Up; read-only in webui)
 │   └── DEPLOYED   the commit, the ref and the time of the fetch
-├── data/      Open WebUI: users, chats, files, document vectors, the Whisper model cache
+├── data/      Open WebUI: users, chats, files, document vectors, the Whisper model cache;
+│              router/router.sqlite: the Router's voice modes and classifier misses (CR-4)
 └── secrets/   chmod 700, read-only in webui; each file 600 and holding only its value
     ├── openrouter-api-key     the chat-server OpenRouter key                 (you)
     ├── webui-admin-password   the admin account's password                   (you)
@@ -60,7 +61,7 @@ prepare each (you) step and verify it afterwards.
      with this password), so nobody can claim admin by signing up first.
    - Check: the webui container's log (OMV Compose → Files → Chat → Logs) shows `entrypoint: running <commit>
      (stable), Open WebUI <version>`, `[load_functions] first start: sign-ups on, new accounts wait for approval`,
-     four functions installed, and `[load_functions] done`. The first start also downloads the document embedding
+     two functions installed (`router`, `voice_note`), and `[load_functions] done`. The first start also downloads the document embedding
      model (about 380 MB, into `data/cache`), so document search is ready a minute or two later.
 4. **Address (you):** point `openai.selvalogesh.com` at `CHAT_UI_PORT` on this host with your proxy or tunnel. It
    must pass WebSockets (live replies and call mode use them); with Nginx, also allow uploads of 50 MB or more
@@ -74,8 +75,11 @@ prepare each (you) step and verify it afterwards.
   published port;
 - the model picker shows exactly **Auto, Creative, Smart, Free**, and a chat on Auto answers, with a status line
   under the reply naming the model, tokens and cost;
-- the chat input's toggles work: **Web search** (an answer about today's news with sources), **Create image** (an
-  image in the reply), **Voice reply** (a voice-note player under the reply that plays on your phone);
+- the chat input has **no Integrations button**, and each format comes by itself (CR-4): "draw a lighthouse at
+  dusk" gives an image, and "same, but in winter" a matching one; "what's in today's news?" answers with sources;
+  "plot sin(x) from 0 to 10" runs Python and shows the chart; "reply with a voice note" puts a player under that
+  reply that plays on your phone; "from now on, voice notes" voices every reply until "stop the voice notes". The
+  status line under each says what was chosen, e.g. `auto: web search`;
 - the microphone dictates a message, and call mode answers aloud (the first dictation downloads Whisper's model,
   about a minute);
 - an uploaded PDF can be asked about;
@@ -85,8 +89,17 @@ prepare each (you) step and verify it afterwards.
 
 - **New people** sign up at the address and wait as pending. Approve them in Admin → Users (role "user").
 - **Models:** Admin → Functions → Router → Valves holds each option's chain (comma-separated OpenRouter model ids,
-  up to any length; they're asked in groups of three), the image models, the task model and the thinking time
-  limit. Changes apply at once and survive updates.
+  up to any length; they're asked in groups of three), the image models, the task model, the classifier's model
+  and the thinking time limit. Changes apply at once and survive updates.
+- **Wrong formats** (an image when you wanted words, no search when it needed one): say so in the next message
+  ("no, I wanted a picture"). That reply comes in the right format, and the miss becomes an example for that
+  person's later messages; so does a format the model chose itself with a tool. To see or delete misses, run in the
+  webui container (`docker ps` names it):
+  - `docker exec <webui> python /app/chat/deploy/detections.py list` (add `--user EMAIL` for one person);
+  - `… detections.py delete ID`, or `… detections.py clear --user EMAIL` (or `--all`).
+
+  A thumbs-down is listed too, but never learned from. Good misses can become seed examples for everyone in
+  `router.py` (CR-4 §3.7).
 - **Spending:** every request carries the person's Open WebUI user id, so OpenRouter's Activity page can split
   usage by person. The workspace budget ($10 a month) is the hard cap; when it or the credits run out, the Router
   answers from the Free chain and says so under the reply.
@@ -135,6 +148,19 @@ change saved settings. After the CR-3 update (Down, Up), in Admin → Settings �
 Check: ask a question about a document in a knowledge base and get an answer from it; Admin → Settings → Documents
 shows the engine as Default and no API key.
 
+## Once: turn off the Code Interpreter (CR-4, you)
+
+A server set up before CR-4 has the Code Interpreter saved as on in its database, and the new `settings.env`
+doesn't change saved settings. While it's on, the chat input keeps its **Integrations** button (CR-4 O1). After the
+CR-4 update (Down, Up):
+
+1. In Admin → Settings → Code Execution, turn **Code Interpreter** off and save. Leave **Code Execution** (the Run
+   button on code blocks) as it is.
+2. Check: the webui log shows `web_search: removed (retired)` and `image_mode: removed (retired)` (the old toggles);
+   Admin → Functions lists only Router and Voice reply; the chat input has no Integrations button, on a phone too.
+
+A fresh install needs none of this.
+
 ## Troubleshooting
 
 | Symptom | Cause and fix |
@@ -149,4 +175,7 @@ shows the engine as Default and no API key.
 | Replies end with "free fallback" in the status line | Credits or the monthly budget ran out: top up on OpenRouter, or wait for the reset |
 | Replies say "logging provider" | No private provider could answer that chain, so a logging one did (R6 allows this as a last resort) |
 | "Voice note unavailable right now" | The kokoro container is down or still starting: check it in OMV |
+| The Integrations button is still there | The Code Interpreter is still on: "Once: turn off the Code Interpreter" above |
+| A reply ignores "draw…" or "search…" | The classifier failed or took over 4 s, so the turn was plain chat (the log says `classifier failed`). Ask again, or say "generate an image of…" |
+| "Running the code…" and then an answer without results | The browser couldn't run the Python (tab closed, or Pyodide still loading on a slow phone): ask again with the chat open |
 | `[load_functions] … FAILED` in the log | Usually the admin password differs between the app and the file (see above) |
