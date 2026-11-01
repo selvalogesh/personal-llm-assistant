@@ -4,8 +4,8 @@ The chat input loses its integrations button. The Router works out from each mes
 an image, an answer from the web, a voice note or code that runs, and returns that format. A cheap classifier
 decides before each turn, and models that can call tools may also call them while answering. Misses are recorded,
 and the strong ones become examples that improve the classifier over time for the person who wrote them. This replaces CR-1's toggles (§3.1 web
-search, §3.2 Create image, §3.4 Voice reply, D7). **State: built and checked on the laptop (phases 1–7); merging into
-`main` and the server (phase 8) are next.**
+search, §3.2 Create image, §3.4 Voice reply, D7). **State: done; live on the server since 2026-11-01, and every check
+passed on the owner's phone.**
 
 ## 1. Requirements
 
@@ -215,7 +215,7 @@ into `main` once phase 7 passes.
 | 5 | **Toggles out** | Delete `web_search.py` and `image_mode.py`; retired ids in `load_functions.py`; `ENABLE_CODE_INTERPRETER=false`; `deploy/detections.py`; tests | Done: 99 offline tests; a test checks no function is a toggle |
 | 6 | **Docs** | `deploy/README.md` (the one-time Code Interpreter switch, checks, the `detections.py` commands, a troubleshooting row), `ENVIRONMENT.md` (new valves, the store), "superseded by CR-4" notes on CR-1 §3.1 (web toggle), §3.2, §3.4 and D7 | Done, with the root README |
 | 7 | **Local stack check** | §6 against a stack from the working tree, and a stack upgraded from the current `stable` | Done (below); it found the voice-note wording (D18) |
-| 8 | **Server (owner)** | Down, Up after CI moves `stable`, then the one-time switch and the runbook's checks | Not started |
+| 8 | **Server (owner)** | Down, Up after CI moves `stable`, then the one-time switch and the runbook's checks | Done (2026-11-01, below) |
 
 **On the laptop (2026-11-01, phase 7):** a stack started from `stable` (commit "CR-1: Generated image shows when the
 prompt has new lines or brackets", four functions), then Down, Up on the working tree, in Edge through Playwright,
@@ -237,6 +237,15 @@ with the laptop key (about $0.15 in all):
   OpenRouter's search tool, with sources; both became learned misses.
 - **Fresh install** (an empty folder, the working tree): the loader installed only `router` and `voice_note`, the
   Code Interpreter was off from `settings.env`, and the chat input had no Integrations button, with no manual step.
+
+**On the server (2026-11-01):** `main` was fast-forwarded to the branch; CI passed and moved `stable`. A session on
+the server ran Down, Up from the shell (the chat was down about a minute; `compose.yaml` hadn't changed, so nothing
+was pasted into OMV). `app/DEPLOYED` showed the commit "CR-4: Local stack check passed, upgraded from stable and
+fresh; …" and the log showed `web_search: removed (retired)`, `image_mode: removed (retired)` and `[load_functions]
+done` with no errors; Admin → Functions listed only Router and Voice reply. The one-time switch was done through the
+admin settings API (signed in with the secrets file's password): Code Interpreter off and saved, Code Execution
+still on. On the owner's phone, every check passed: no Integrations button, the lighthouse and its winter version,
+today's news with sources, the sin(x) plot, a voice note, and voice notes on and then off.
 
 ## 6. Verification
 
