@@ -106,6 +106,11 @@ def last_user_text(messages: list) -> str:
     return ""
 
 
+def alt_text(prompt: str) -> str:
+    """Markdown image alt text ends at a blank line or a bracket, so the prompt goes on one line without them."""
+    return " ".join(re.sub(r"[\[\]\\]", " ", prompt).split())[:80]
+
+
 class Pipe:
     class Valves(BaseModel):
         API_BASE_URL: str = "https://openrouter.ai/api/v1"
@@ -429,7 +434,7 @@ class Pipe:
                     break
                 continue
             url = await self._store_image(image, request, metadata, user)
-            yield f"![{prompt[:80]}]({url})"
+            yield f"![{alt_text(prompt)}]({url})"
             await self._footer(emitter, {"model": model, "tokens": 0, "cost": cost}, "chain", "n/a", False)
             return
         yield FRIENDLY.get(last_error.kind if last_error else "other", FRIENDLY["other"])

@@ -248,6 +248,16 @@ def test_create_image_tries_the_next_model_on_failure(key_file):
     assert fake.requests == []
 
 
+def test_create_image_alt_text_stays_on_one_line(key_file):
+    png = base64.b64encode(b"fake-image").decode()
+    fake = FakeOpenRouter(images=[(200, {"data": [{"b64_json": png, "media_type": "image/webp"}]})])
+    prompt = "generate a bird [image]\n\nmake the bird beautiful and colourful"
+    text = chat(make_pipe(fake, key_file), content=prompt, **{router.IMAGE_FLAG: True})
+    alt = "generate a bird image make the bird beautiful and colourful"
+    assert text == f"![{alt}](data:image/webp;base64,{png})"
+    assert fake.image_requests[0]["prompt"] == prompt  # the model still gets the prompt as written
+
+
 def test_create_image_needs_a_description(key_file):
     fake = FakeOpenRouter()
     assert "Describe the image" in chat(make_pipe(fake, key_file), content="  ", **{router.IMAGE_FLAG: True})
