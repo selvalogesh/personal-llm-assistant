@@ -1,0 +1,43 @@
+{"msg": "Draw a conclusion from these results: sales up 10%, costs up 12%.", "want": {}}
+{"msg": "Can you explain how photosynthesis works?", "want": {}}
+{"msg": "Write a short story about a cat who becomes a detective.", "want": {}}
+{"msg": "Picture this: you're a pirate captain. Stay in character and greet me.", "want": {}}
+{"msg": "What's the capital of Australia?", "want": {}}
+{"msg": "Write a Python function that reverses a linked list.", "want": {}}
+{"msg": "Describe what a sunset over the ocean looks like.", "want": {}}
+{"msg": "How do I make my voice sound better when singing?", "want": {}}
+{"msg": "Translate 'good morning' into Tamil.", "want": {}}
+{"msg": "Explain the difference between an image and a container in Docker.", "want": {}}
+{"msg": "Sketch out a plan for my week: gym 3 times, study 2 hours a day.", "want": {}}
+{"msg": "What is 15% of 80?", "want": {}, "ok": [{"code": true}]}
+{"msg": "Draw me a lighthouse at dusk.", "want": {"image": true}}
+{"msg": "Generate a picture of a golden retriever wearing sunglasses.", "want": {"image": true}}
+{"msg": "Can you make an image of a futuristic Chennai skyline?", "want": {"image": true}}
+{"msg": "I need a logo for my bakery called Sweet Crumbs.", "want": {"image": true}}
+{"msg": "Make it at night with a full moon.", "prev": "Draw a red fox in the snow", "last": "image", "want": {"image": true}, "prompt_has": ["fox", "moon"]}
+{"msg": "Now make the cat orange.", "prev": "Draw a cat sleeping on a windowsill", "last": "image", "want": {"image": true}, "prompt_has": ["cat", "orange"]}
+{"msg": "Nice! What breed is that dog usually?", "prev": "Draw a fluffy white dog in a garden", "last": "image", "want": {}}
+{"msg": "Show me what a Victorian era kitchen looked like.", "want": {"image": true}, "ok": [{}]}
+{"msg": "What's the weather in Chennai today?", "want": {"web": true}}
+{"msg": "Who won yesterday's IPL match?", "want": {"web": true}}
+{"msg": "Research the best budget phones released this year.", "want": {"web": true}}
+{"msg": "What's the current price of Bitcoin?", "want": {"web": true}}
+{"msg": "Find me recent reviews of the Hyundai Creta 2026.", "want": {"web": true}}
+{"msg": "Latest news on the Artemis mission?", "want": {"web": true}}
+{"msg": "Is the Chennai metro phase 2 open yet?", "want": {"web": true}}
+{"msg": "Plot sin(x) and cos(x) from 0 to 2π.", "want": {"code": true}}
+{"msg": "Calculate the compound interest on 5 lakh at 7.5% for 12 years, compounded monthly.", "want": {"code": true}}
+{"msg": "Here are my monthly expenses: 12000, 8500, 15200, 9900, 11000, 13400. Give me the mean, median and a bar chart.", "want": {"code": true}}
+{"msg": "Run this: print(sum(i*i for i in range(1000)))", "want": {"code": true}}
+{"msg": "What is the 50th prime number? Compute it exactly, don't guess.", "want": {"code": true}}
+{"msg": "Reply with a voice note: what's a good name for a goldfish?", "want": {"voice": "once"}}
+{"msg": "From now on, send your replies as voice notes.", "want": {"voice": "on"}}
+{"msg": "Tell me a fun fact about owls.", "voice_mode": true, "want": {}, "ok": [{"voice": "once"}]}
+{"msg": "Okay, stop the voice notes, text is fine.", "voice_mode": true, "want": {"voice": "off"}}
+{"msg": "Can you say that out loud?", "prev": "Give me a motivational quote", "last": "text", "want": {"voice": "once"}}
+{"msg": "Read me a bedtime story as audio.", "want": {"voice": "once"}}
+{"msg": "Search for today's top cricket news and send it as a voice note.", "want": {"web": true, "voice": "once"}}
+{"msg": "Look up the current USD to INR rate and chart how 100 to 1000 dollars convert at that rate.", "want": {"web": true, "code": true}}
+{"msg": "No, I meant an actual picture, generate it.", "prev": "Show me a sunset over Marina beach", "last": "text", "want": {"image": true}, "corrects": {"image": true}, "prompt_has": ["sunset", "marina"]}
+{"msg": "That's outdated, search the web for it.", "prev": "What's new with the iPhone 18?", "last": "text", "want": {"web": true}, "corrects": {"web": true}}
+{"msg": "Why did you make an image? I wanted a written answer.", "prev": "Draw a conclusion about this essay's argument", "last": "image", "want": {}, "corrects": {"image": false}}
