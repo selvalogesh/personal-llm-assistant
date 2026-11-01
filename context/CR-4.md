@@ -82,7 +82,7 @@ the classifier's `image_prompt` rather than the raw message, so follow-ups like 
 | Tool | What the Router does | Limit per turn |
 |---|---|---|
 | `generate_image(prompt)` | §3.2's image path; the image goes into the reply, and the model is told it's shown | 1 |
-| `web_search(query)` | Asks the same model again with the web plugin on (O6 may find a better way) | 1 |
+| `web_search(query)` | A separate call to `TASK_MODEL` with the web plugin on. Its findings and links go back to the answering model as the tool's result, and it carries on (D10; O6 may find a better way) | 1 |
 | `run_python(code)` | §3.4 | 3 |
 | `voice_reply(mode)` | Same as the classifier's `voice` | 1 |
 
@@ -174,7 +174,7 @@ into `main` once phase 7 passes.
 |---|---|---|---|
 | 0 | **Plan** | This file and the [index](README.md) entry | Done |
 | 1 | **Spike: O1–O8** on the laptop | Findings in a new §4 table; the design adjusted where needed | Not started |
-| 2 | **Classifier and store** | `router.py`: the classifier with seed examples, the store, the miss log and learned examples, the footer label; the labelled set; tests | Not started |
+| 2 | **Classifier and store** | `router.py`: the classifier with seed examples, the store, the miss log and learned examples, the footer label; the labelled set and `tools/eval_classifier.py`; tests | Not started |
 | 3 | **Tools** | `router.py`: tool-capable batches, `TOOL_MODELS`, the tool loop, `run_python` through the browser, caps; tests with a fake HTTP layer | Not started |
 | 4 | **Voice** | `voice_note.py` without the toggle, reading the store; voice mode on/off/once; tests | Not started |
 | 5 | **Toggles out** | Delete `web_search.py` and `image_mode.py`; retired ids in `load_functions.py`; `ENABLE_CODE_INTERPRETER=false`; `deploy/detections.py`; tests | Not started |
@@ -187,7 +187,7 @@ into `main` once phase 7 passes.
 | Check | How |
 |---|---|
 | Offline tests | `pytest`: classifier parsing, timeout and failure fall back to chat; image, web, code and voice routing; tools only on all-capable batches; tool loop and caps; voice once/on/off; misses from tools and corrections; learned examples per user, capped and deduplicated, and never in another user's call; the loader removes retired ids only; `ENABLE_CODE_INTERPRETER=false` |
-| Classifier accuracy | The labelled set (O5) scores at or above the spike's result; misses listed |
+| Classifier accuracy | `tools/eval_classifier.py` on the labelled set (O5) scores at or above the spike's result and lists the misses. It calls OpenRouter, so it runs on purpose before a release, never in `pytest` (D12) |
 | No button | The chat input has no integrations button, for an admin and for a user (O1) |
 | Each format | "Draw a lighthouse at dusk" gives an image; "same, but in winter" gives a matching one; "what's in today's news" answers with sources; "plot sin(x) from 0 to 10" runs and shows the chart; "reply with a voice note" voices one reply; "from now on, voice notes" voices the next three until "stop the voice notes" |
 | Tools as backup | With the classifier's model set to something broken, a tool-capable chain still makes an image and searches the web when asked |
@@ -207,3 +207,8 @@ into `main` once phase 7 passes.
 | D6 | Tools only for batches where every model supports them | What OpenRouter does with a mixed batch is unknown (O4), and an error there would be read as a privacy failure and retried |
 | D7 | Retired functions are removed by an explicit id list in the loader | Removing whatever isn't in the repo would also delete functions the owner added in the UI |
 | D8 | The live server turns the Code Interpreter off by hand, once | As CR-3 D2: a saved setting, changed once, and the loader shouldn't override the admin's choices |
+| D9 | The classifier lives inside the Router, not in a filter that runs before it | Owner's choice. One place talks to OpenRouter: a filter would need its own copy of the key reading, HTTP calls, privacy order and error handling, and the Router needs the store for misses anyway |
+| D10 | The `web_search` tool is a separate cheap call with the web plugin, whose findings go back to the answering model | Owner's choice. It fits the tool loop and costs about the same. Rejected: throwing the turn away and asking again with the plugin on (the thinking already shown would repeat), and the plugin on every turn (a search costs $0.001–0.005, often more than the reply itself; results add tokens and delay to every turn; every message would go to the search engine, outside the providers' privacy order; and search results distract creative and roleplay replies) |
+| D11 | Code runs through the Router's own tool loop (`execute:python`), not Open WebUI's interpreter | Owner's choice. Open WebUI's interpreter needs legacy function calling, set per chat or per model before any filter runs, and our options have no model records. Fallback if O2 fails: model records for the four options with legacy calling |
+| D12 | Classifier accuracy is measured by `tools/eval_classifier.py`, run on purpose | Owner's choice. `pytest` never calls OpenRouter (CLAUDE.md); offline tests check only that the classifier's answers are read correctly. A run costs a fraction of a cent |
+| D13 | Every reply waits for the classifier before the main call | Owner's choice. Starting the answer at the same time would be faster but pays for a wasted start whenever the format changes. The real delay is measured in phase 7 before anything is optimised |
