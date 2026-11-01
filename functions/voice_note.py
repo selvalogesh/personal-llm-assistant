@@ -1,26 +1,23 @@
 """
 title: Voice reply
 author: selvalogesh
-version: 1.0.0
-description: A toggle in the chat input. When it's on, each reply also arrives as a voice note: Kokoro reads it on the server and a player is attached to the message (CR-1 §3.4, R16).
+version: 1.1.0
+description: Runs after every reply. When the Router has marked the reply for a voice note (the user asked for one, or voice mode is on in the chat), Kokoro reads it on the server and a player is attached to the message (CR-1 §3.4, R16; CR-4 §3.5).
 """
 
 import base64
 import html
 import logging
+import os
 import re
+import sqlite3
+from contextlib import closing
 from typing import Optional
 
 import httpx
 from pydantic import BaseModel, Field
 
 log = logging.getLogger("voice_note")
-
-ICON = (
-    "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' "
-    "stroke='currentColor' stroke-width='2'><path d='M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z'/>"
-    "<path d='M19 11a7 7 0 0 1-14 0M12 18v3'/></svg>"
-)
 
 PLAYER = """<!doctype html><html><head><meta charset="utf-8"><style>
 body{{margin:0;font-family:system-ui,sans-serif;background:transparent}}
@@ -61,16 +58,33 @@ class Filter:
         SPEED: float = 1.0
         MAX_CHARS: int = Field(default=1200, description="Longer replies are cut at a sentence (about 75 s of audio)")
         TIMEOUT_SECONDS: int = 180
+        STORE_PATH: str = Field(
+            default="/app/backend/data/router/router.sqlite",
+            description="The Router's file, where it marks the replies to voice (the Router's STORE_PATH)",
+        )
 
     def __init__(self):
         self.valves = self.Valves()
-        self.toggle = True
-        self.icon = ICON
         self.transport: Optional[httpx.AsyncBaseTransport] = None  # tests inject a mock transport
+
+    def marked(self, message_id: str) -> bool:
+        """Whether the Router marked this reply for a voice note. Only the table is shared, not code: each function
+        stays self-contained (CR-4 §3.5)."""
+        if not message_id or not os.path.exists(self.valves.STORE_PATH):
+            return False
+        try:
+            with closing(sqlite3.connect(self.valves.STORE_PATH, timeout=5)) as con:
+                row = con.execute("SELECT 1 FROM voice_messages WHERE message_id = ?", (message_id,)).fetchone()
+            return row is not None
+        except sqlite3.Error as e:
+            log.warning("voice_note: reading the Router's marks failed: %s", e)
+            return False
 
     async def outlet(self, body: dict, __event_emitter__=None) -> dict:
         messages = body.get("messages") or []
         if not messages or messages[-1].get("role") != "assistant" or not __event_emitter__:
+            return body
+        if not self.marked(body.get("id") or ""):  # the reply's id, the same the Router saw (CR-4 O3)
             return body
         text = shorten(speakable(messages[-1].get("content") or ""), self.valves.MAX_CHARS)
         if not text.replace("(code omitted)", "").strip():

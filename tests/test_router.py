@@ -418,6 +418,39 @@ def test_voice_mode_turns_on_and_off_for_the_chat(key_file):
     assert pipe._remember("voice_on", "chat-1") is False
 
 
+def voiced(pipe) -> list[str]:
+    with sqlite3.connect(pipe.valves.STORE_PATH) as con:
+        return [row[0] for row in con.execute("SELECT message_id FROM voice_messages ORDER BY at")]
+
+
+def test_replies_marked_for_voice_notes(key_file):
+    # once: this reply only; on: this and the next; off: none after (CR-4 §3.5)
+    intents = [intent(voice="once"), intent(), intent(voice="on"), intent(), intent(voice="off"), intent()]
+    fake = FakeOpenRouter([OK] * 6, intents=intents)
+    pipe = make_pipe(fake, key_file)
+    for n, text in enumerate(["say it aloud", "and text?", "voice from now on", "owls?", "stop voice", "ok"], 1):
+        turn(pipe, text, f"r{n}")
+    assert voiced(pipe) == ["r1", "r3", "r4"]
+
+
+def test_image_turns_are_never_voiced(key_file):
+    fake = FakeOpenRouter(images=[IMAGE_OK], intents=[intent(image=True, image_prompt="a cat", voice="once")])
+    pipe = make_pipe(fake, key_file)
+    turn(pipe, "draw a cat and say it aloud", "r1")
+    pipe._remember("set_voice", "chat-1", False)  # make sure the store exists for the check below
+    assert voiced(pipe) == []
+
+
+def test_the_router_and_the_voice_filter_share_the_mark(key_file):
+    voice = load("functions/voice_note.py")
+    fake = FakeOpenRouter([OK], intents=[intent(voice="once")])
+    pipe = make_pipe(fake, key_file)
+    turn(pipe, "read it to me", "r1")
+    f = voice.Filter()
+    f.valves = f.Valves(STORE_PATH=pipe.valves.STORE_PATH)
+    assert f.marked("r1") and not f.marked("r2")
+
+
 def test_correction_becomes_a_learned_example_for_that_user_only(key_file):
     fix = {**PLAIN_LABELS, "image": True}
     intents = [intent(), intent(image=True, image_prompt="a sunset", corrects_previous=fix)]
@@ -616,6 +649,7 @@ def test_voice_reply_tool_turns_voice_mode_on(key_file):
     pipe = tool_pipe(fake, key_file)
     turn(pipe, "talk to me from now on", "r1")
     assert pipe._remember("voice_on", "chat-1") is True
+    assert voiced(pipe) == ["r1"]
     assert "every reply in this chat" in fake.requests[1]["messages"][-1]["content"]
 
 

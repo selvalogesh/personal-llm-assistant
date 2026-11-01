@@ -293,6 +293,7 @@ class Store:
         CREATE TABLE IF NOT EXISTS turns (
             chat_id TEXT PRIMARY KEY, user_id TEXT, message_id TEXT, text TEXT, labels TEXT, at REAL);
         CREATE TABLE IF NOT EXISTS voice_chats (chat_id TEXT PRIMARY KEY, at REAL);
+        CREATE TABLE IF NOT EXISTS voice_messages (message_id TEXT PRIMARY KEY, at REAL);
         CREATE TABLE IF NOT EXISTS detections (
             id INTEGER PRIMARY KEY, at REAL, user_id TEXT, chat_id TEXT, message_id TEXT, text TEXT, labels TEXT,
             signal TEXT, strong INTEGER);
@@ -343,6 +344,13 @@ class Store:
                 con.execute("INSERT OR REPLACE INTO voice_chats VALUES (?, ?)", (chat_id, time.time()))
             else:
                 con.execute("DELETE FROM voice_chats WHERE chat_id = ?", (chat_id,))
+
+    def mark_voice(self, message_id: str) -> None:
+        """The voice filter (voice_note.py) makes a voice note of this reply; it reads this table itself."""
+        now = time.time()
+        with self._db() as con:
+            con.execute("DELETE FROM voice_messages WHERE at < ?", (now - TURN_SECONDS,))
+            con.execute("INSERT OR REPLACE INTO voice_messages VALUES (?, ?)", (message_id, now))
 
     def add_miss(self, user_id, chat_id, message_id, text, labels, signal, strong) -> None:
         now, text = time.time(), text[:TEXT_LIMIT]
@@ -488,7 +496,9 @@ class Pipe:
             "cost": 0.0,  # the tools' own cost (images)
         }
         if intent["image"]:
-            return self._image(body, turn)
+            return self._image(body, turn)  # an image reply has nothing to say aloud (CR-4 D2)
+        if intent["voice"] in ("once", "on") or (intent["voice_on"] and intent["voice"] != "off"):
+            self._voice(turn, "once")
         return self._chat(body, chain_id, turn)
 
     # ---------- the turn's formats (CR-4 §3.1, §3.7) ----------
@@ -817,10 +827,12 @@ class Pipe:
         return back, shown
 
     def _voice(self, turn: dict, mode: str) -> None:
-        """Voice mode on or off for the chat."""
-        chat_id = turn["metadata"].get("chat_id")
+        """Voice mode on or off for the chat, and a mark that makes this reply a voice note (CR-4 §3.5)."""
+        chat_id, message_id = turn["metadata"].get("chat_id"), turn["metadata"].get("message_id")
         if chat_id and mode in ("on", "off"):
             self._remember("set_voice", chat_id, mode == "on")
+        if message_id and mode in ("once", "on"):
+            self._remember("mark_voice", message_id)
 
     async def _status(self, turn: dict, description: str) -> None:
         if turn["emitter"]:
