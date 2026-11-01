@@ -52,7 +52,7 @@ photo (image generation stays text-to-image), and Open WebUI's own web search an
 - One call per user turn to `TASK_MODEL` (`qwen/qwen3.7-flash`) before the answer, with a JSON schema reply
   (`response_format`, if the model supports it, O5). Its input: the last user message (and whether it has images),
   the previous user message and what format the last reply had, whether voice mode is on in this chat, the seed
-  examples in `router.py`, and this user's learned examples (§3.7).
+  examples in `router.py` (one line each, `message → labels`, §3.8), and this user's learned examples (§3.7).
 - Its output:
 
 | Field | Values | Effect |
@@ -121,7 +121,7 @@ the classifier's `image_prompt` rather than the raw message, so follow-ups like 
 ### 3.7 The store, the miss log and learning (R7)
 - **Store:** one SQLite file, `/app/backend/data/router/router.sqlite` (in `${CHAT}/data`, so it survives Up and
   upgrades). Valve `STORE_PATH`. Tables: `voice_chats` (chat id, on since), `voice_messages` (message ids to voice,
-  dropped after a day), `detections`.
+  dropped after a day), `detections`. Old rows go when the Router writes to their table (§3.8).
 - **What counts as a miss:**
 
 | Signal | Strength | Recorded as |
@@ -142,7 +142,18 @@ the classifier's `image_prompt` rather than the raw message, so follow-ups like 
 - **Looking and deleting:** `deploy/detections.py`, run with `docker exec` in `webui`, lists misses (all, or one
   user's), deletes one, or clears a user's or all. The runbook has the commands.
 
-### 3.8 What gets better, what gets worse
+### 3.8 Keeping `router.py` small
+The file grows from about 520 lines to an estimated 830 (950 before these rules, D14):
+- **One `_complete()`** for every short call that returns text rather than a streamed reply: titles and tags, the
+  classifier and the `web_search` tool's call. The privacy order lives there once; titles keep today's single
+  call that allows logging providers.
+- **One `_make_image()`** (models cheapest first, storing the file, the markdown) for both image turns (§3.2) and
+  the `generate_image` tool.
+- **The store clears old rows when it writes:** a voice mark older than a day goes when a new mark is written, and
+  a miss older than 90 days when a new miss is. No timer and no clean-up on start.
+- **Seed examples one per line** (`"draw a conclusion from this" → chat`), not a JSON object each.
+
+### 3.9 What gets better, what gets worse
 - **Better:** no buttons to find. Images, search, voice and code just happen, including in call mode. Image
   follow-ups keep their context. Code really runs, which the Code Interpreter toggle very likely never did
   with the Router (§2).
@@ -212,3 +223,4 @@ into `main` once phase 7 passes.
 | D11 | Code runs through the Router's own tool loop (`execute:python`), not Open WebUI's interpreter | Owner's choice. Open WebUI's interpreter needs legacy function calling, set per chat or per model before any filter runs, and our options have no model records. Fallback if O2 fails: model records for the four options with legacy calling |
 | D12 | Classifier accuracy is measured by `tools/eval_classifier.py`, run on purpose | Owner's choice. `pytest` never calls OpenRouter (CLAUDE.md); offline tests check only that the classifier's answers are read correctly. A run costs a fraction of a cent |
 | D13 | Every reply waits for the classifier before the main call | Owner's choice. Starting the answer at the same time would be faster but pays for a wasted start whenever the format changes. The real delay is measured in phase 7 before anything is optimised |
+| D14 | `router.py` stays small through shared helpers, clean-up on write and one-line seed examples (§3.8) | Owner's choice, to keep the single-file function readable (it must be one file, CLAUDE.md). Behaviour doesn't change. Considered and kept: the thumbs-down signal (O7) and the `voice_reply` tool |
