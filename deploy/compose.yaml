@@ -9,7 +9,7 @@ services:
   # missing secrets, and fixes modes. Never overwrites a secret. Root, because the folders are root's. The script
   # is here because it can't come from the repo it fetches; "$$" is a literal "$" in compose.
   init:
-    image: ghcr.io/open-webui/open-webui:v0.12.5
+    image: ghcr.io/open-webui/open-webui:v0.13.0
     user: "0:0"
     environment:
       CHAT_REF: ${CHAT_REF:?set CHAT_REF in the stack environment}
@@ -42,7 +42,7 @@ services:
   # openai.selvalogesh.com → your proxy or tunnel → this port. Always on. Starts from our entrypoint in the fetched
   # copy, which loads deploy/settings.env, checks the Open WebUI version, then reads the secrets.
   webui:
-    image: ghcr.io/open-webui/open-webui:v0.12.5
+    image: ghcr.io/open-webui/open-webui:v0.13.0
     command: ["bash", "/app/chat/deploy/entrypoint.sh"]
     depends_on:
       init:
