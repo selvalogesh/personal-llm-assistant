@@ -67,5 +67,5 @@ services:
   # Text-to-speech for read-aloud, call mode and voice notes. No ports: only webui reaches it, on the stack's
   # network (R14).
   kokoro:
-    image: ghcr.io/remsky/kokoro-fastapi-cpu:v0.9.2
+    image: ghcr.io/remsky/kokoro-fastapi-cpu:v0.10.0
     restart: unless-stopped
